@@ -1,0 +1,5 @@
+google-api-python-client==2.147.0
+google-auth==2.35.0
+cloudinary==1.41.0
+requests==2.32.3
+python-dateutil==2.9.0
