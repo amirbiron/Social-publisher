@@ -1,0 +1,37 @@
+# ═══════════════════════════════════════════════════════════════
+#  render.yaml — Render Blueprint (Cron Job)
+#  https://render.com/docs/blueprint-spec
+# ═══════════════════════════════════════════════════════════════
+
+services:
+  - type: cron
+    name: social-publisher
+    runtime: python
+    schedule: "*/1 * * * *"   # כל דקה (UTC)
+    buildCommand: pip install -r requirements.txt
+    startCommand: python main.py
+    region: frankfurt           # הכי קרוב לישראל
+    plan: starter               # שנה לפי צורך
+    envVars:
+      - key: GOOGLE_SERVICE_ACCOUNT_JSON
+        sync: false
+      - key: SPREADSHEET_ID
+        sync: false
+      - key: SHEET_NAME
+        value: Sheet1
+      - key: CLOUDINARY_CLOUD_NAME
+        sync: false
+      - key: CLOUDINARY_API_KEY
+        sync: false
+      - key: CLOUDINARY_API_SECRET
+        sync: false
+      - key: META_API_VERSION
+        value: v21.0
+      - key: IG_USER_ID
+        sync: false
+      - key: IG_ACCESS_TOKEN
+        sync: false
+      - key: FB_PAGE_ID
+        sync: false
+      - key: FB_PAGE_ACCESS_TOKEN
+        sync: false
