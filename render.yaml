@@ -25,6 +25,8 @@ services:
         sync: false
       - key: CLOUDINARY_API_SECRET
         sync: false
+      - key: CLOUDINARY_RETENTION_DAYS
+        value: "10"
       - key: META_API_VERSION
         value: v21.0
       - key: IG_USER_ID

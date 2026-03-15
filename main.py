@@ -7,6 +7,7 @@ main.py — סקריפט ראשי שרץ כ-Render Cron Job
 """
 
 import logging
+import os
 import re
 import sys
 from datetime import datetime, timedelta, timezone
@@ -179,7 +180,7 @@ def _mark_error(header: list[str], sheet_row_number: int, error_msg: str):
 #  Cloudinary Cleanup
 # ═══════════════════════════════════════════════════════════════
 
-CLOUDINARY_RETENTION_DAYS = 10
+CLOUDINARY_RETENTION_DAYS = int(os.environ.get("CLOUDINARY_RETENTION_DAYS", "10"))
 
 # חילוץ public_id מ-URL של Cloudinary
 # https://res.cloudinary.com/CLOUD/image/upload/v123/social-publisher/abc.jpg
