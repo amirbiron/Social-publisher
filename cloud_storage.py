@@ -9,6 +9,8 @@ import cloudinary
 import cloudinary.api
 import cloudinary.uploader
 
+import os
+
 from config import (
     CLOUDINARY_CLOUD_NAME,
     CLOUDINARY_API_KEY,
@@ -19,12 +21,17 @@ from config import (
 logger = logging.getLogger(__name__)
 
 # ─── Init Cloudinary ─────────────────────────────────────────
-cloudinary.config(
-    cloud_name=CLOUDINARY_CLOUD_NAME,
-    api_key=CLOUDINARY_API_KEY,
-    api_secret=CLOUDINARY_API_SECRET,
-    secure=True,
-)
+# אם CLOUDINARY_URL מוגדר, ה-SDK קורא אותו אוטומטית.
+# אחרת, מגדירים מהמשתנים הנפרדים.
+if os.environ.get("CLOUDINARY_URL"):
+    cloudinary.config(secure=True)
+else:
+    cloudinary.config(
+        cloud_name=CLOUDINARY_CLOUD_NAME,
+        api_key=CLOUDINARY_API_KEY,
+        api_secret=CLOUDINARY_API_SECRET,
+        secure=True,
+    )
 
 
 def upload_to_cloudinary(
