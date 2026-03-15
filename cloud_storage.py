@@ -6,6 +6,7 @@ import logging
 import tempfile
 
 import cloudinary
+import cloudinary.api
 import cloudinary.uploader
 
 from config import (
@@ -64,6 +65,38 @@ def upload_to_cloudinary(
     secure_url = result["secure_url"]
     logger.info(f"Cloudinary URL: {secure_url}")
     return secure_url
+
+
+def delete_from_cloudinary(public_id: str, resource_type: str = "image") -> bool:
+    """
+    מוחק נכס מ-Cloudinary לפי public_id.
+    מחזיר True אם הנכס נמחק בהצלחה.
+    """
+    logger.info(f"Deleting from Cloudinary: {public_id} ({resource_type})")
+    result = cloudinary.uploader.destroy(public_id, resource_type=resource_type)
+    ok = result.get("result") == "ok"
+    if ok:
+        logger.info(f"Deleted: {public_id}")
+    else:
+        logger.warning(f"Delete failed for {public_id}: {result}")
+    return ok
+
+
+def list_cloudinary_assets(
+    resource_type: str = "image",
+    prefix: str = "social-publisher",
+    max_results: int = 50,
+) -> list[dict]:
+    """
+    מחזיר רשימת נכסים מ-Cloudinary.
+    ברירת מחדל: נכסים בתיקיית social-publisher.
+    """
+    result = cloudinary.api.resources(
+        resource_type=resource_type,
+        prefix=prefix,
+        max_results=max_results,
+    )
+    return result.get("resources", [])
 
 
 def _get_suffix(mime_type: str) -> str:

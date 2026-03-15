@@ -4,6 +4,7 @@ config.py — הגדרות סביבה וקבועים
 
 import os
 import json
+import urllib.parse
 from zoneinfo import ZoneInfo
 
 # ─── Timezone ────────────────────────────────────────────────
@@ -26,9 +27,18 @@ IG_ACCESS_TOKEN = os.environ["IG_ACCESS_TOKEN"]
 FB_PAGE_ACCESS_TOKEN = os.environ["FB_PAGE_ACCESS_TOKEN"]
 
 # ─── Cloudinary ──────────────────────────────────────────────
-CLOUDINARY_CLOUD_NAME = os.environ["CLOUDINARY_CLOUD_NAME"]
-CLOUDINARY_API_KEY = os.environ["CLOUDINARY_API_KEY"]
-CLOUDINARY_API_SECRET = os.environ["CLOUDINARY_API_SECRET"]
+# אפשרות 1 (מועדפת): CLOUDINARY_URL=cloudinary://API_KEY:API_SECRET@CLOUD_NAME
+# אפשרות 2: שלושה משתנים נפרדים
+_cloudinary_url = os.environ.get("CLOUDINARY_URL")
+if _cloudinary_url:
+    _parsed = urllib.parse.urlparse(_cloudinary_url)
+    CLOUDINARY_CLOUD_NAME = _parsed.hostname
+    CLOUDINARY_API_KEY = _parsed.username
+    CLOUDINARY_API_SECRET = _parsed.password
+else:
+    CLOUDINARY_CLOUD_NAME = os.environ["CLOUDINARY_CLOUD_NAME"]
+    CLOUDINARY_API_KEY = os.environ["CLOUDINARY_API_KEY"]
+    CLOUDINARY_API_SECRET = os.environ["CLOUDINARY_API_SECRET"]
 
 # ─── Google Scopes ───────────────────────────────────────────
 GOOGLE_SCOPES = [
