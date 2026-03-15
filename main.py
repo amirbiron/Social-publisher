@@ -7,8 +7,10 @@ main.py — סקריפט ראשי שרץ כ-Render Cron Job
 """
 
 import logging
+import os
+import re
 import sys
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from dateutil import parser as dtparser
 
@@ -36,7 +38,7 @@ from google_api import (
     sheets_update_cells,
     drive_download_with_metadata,
 )
-from cloud_storage import upload_to_cloudinary
+from cloud_storage import upload_to_cloudinary, delete_from_cloudinary
 from meta_publish import ig_publish_feed, fb_publish_feed
 
 # ─── Logging ─────────────────────────────────────────────────
@@ -175,6 +177,75 @@ def _mark_error(header: list[str], sheet_row_number: int, error_msg: str):
 
 
 # ═══════════════════════════════════════════════════════════════
+#  Cloudinary Cleanup
+# ═══════════════════════════════════════════════════════════════
+
+CLOUDINARY_RETENTION_DAYS = int(os.environ.get("CLOUDINARY_RETENTION_DAYS", "10"))
+
+# חילוץ public_id מ-URL של Cloudinary
+# https://res.cloudinary.com/CLOUD/image/upload/v123/social-publisher/abc.jpg
+#   → social-publisher/abc
+_CLOUDINARY_URL_RE = re.compile(
+    r"https?://res\.cloudinary\.com/[^/]+/(?P<rtype>image|video)/upload/(?:v\d+/)?(?P<pid>.+)\.\w+$"
+)
+
+
+def cleanup_old_cloudinary_assets(
+    header: list[str],
+    rows: list[list[str]],
+    now_utc: datetime,
+) -> int:
+    """
+    מוחק נכסים מ-Cloudinary עבור שורות POSTED
+    שפורסמו לפני יותר מ-CLOUDINARY_RETENTION_DAYS ימים.
+    מחזיר מספר הנכסים שנמחקו.
+    """
+    cutoff = now_utc - timedelta(days=CLOUDINARY_RETENTION_DAYS)
+    deleted = 0
+
+    for i, row in enumerate(rows, start=2):
+        status = get_cell(row, header, COL_STATUS).strip().upper()
+        if status != STATUS_POSTED:
+            continue
+
+        cloud_url = get_cell(row, header, COL_CLOUDINARY_URL).strip()
+        if not cloud_url:
+            continue
+
+        publish_at = get_cell(row, header, COL_PUBLISH_AT).strip()
+        if not publish_at:
+            continue
+
+        # בדיקה אם עברו מספיק ימים
+        try:
+            dt_il = dtparser.parse(publish_at)
+        except (ValueError, TypeError):
+            continue
+
+        if dt_il.tzinfo is None:
+            dt_il = dt_il.replace(tzinfo=TZ_IL)
+
+        if dt_il.astimezone(timezone.utc) > cutoff:
+            continue
+
+        # חילוץ public_id ו-resource_type מה-URL
+        match = _CLOUDINARY_URL_RE.match(cloud_url)
+        if not match:
+            logger.warning(f"Row {i}: Cannot parse Cloudinary URL: {cloud_url}")
+            continue
+
+        public_id = match.group("pid")
+        resource_type = match.group("rtype")
+
+        logger.info(f"Row {i}: Deleting old asset {public_id} ({resource_type})")
+        if delete_from_cloudinary(public_id, resource_type=resource_type):
+            sheets_update_cells(i, {COL_CLOUDINARY_URL: ""}, header)
+            deleted += 1
+
+    return deleted
+
+
+# ═══════════════════════════════════════════════════════════════
 #  Main
 # ═══════════════════════════════════════════════════════════════
 
@@ -224,6 +295,11 @@ def main():
         processed += 1
 
     logger.info(f"Done. Processed: {processed}, Skipped (not due): {skipped}")
+
+    # ── ניקוי נכסים ישנים מ-Cloudinary ──
+    deleted = cleanup_old_cloudinary_assets(header, rows, now_utc)
+    if deleted:
+        logger.info(f"Cloudinary cleanup: deleted {deleted} old asset(s)")
 
 
 if __name__ == "__main__":

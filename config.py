@@ -26,9 +26,21 @@ IG_ACCESS_TOKEN = os.environ["IG_ACCESS_TOKEN"]
 FB_PAGE_ACCESS_TOKEN = os.environ["FB_PAGE_ACCESS_TOKEN"]
 
 # ─── Cloudinary ──────────────────────────────────────────────
-CLOUDINARY_CLOUD_NAME = os.environ["CLOUDINARY_CLOUD_NAME"]
-CLOUDINARY_API_KEY = os.environ["CLOUDINARY_API_KEY"]
-CLOUDINARY_API_SECRET = os.environ["CLOUDINARY_API_SECRET"]
+# אפשרות 1 (מועדפת): CLOUDINARY_URL=cloudinary://API_KEY:API_SECRET@CLOUD_NAME
+#   ה-SDK קורא את CLOUDINARY_URL אוטומטית
+# אפשרות 2: שלושה משתנים נפרדים
+CLOUDINARY_CLOUD_NAME = os.environ.get("CLOUDINARY_CLOUD_NAME")
+CLOUDINARY_API_KEY = os.environ.get("CLOUDINARY_API_KEY")
+CLOUDINARY_API_SECRET = os.environ.get("CLOUDINARY_API_SECRET")
+
+# וידוא שיש לפחות אחת מהאפשרויות
+if not os.environ.get("CLOUDINARY_URL") and not all(
+    [CLOUDINARY_CLOUD_NAME, CLOUDINARY_API_KEY, CLOUDINARY_API_SECRET]
+):
+    raise RuntimeError(
+        "Cloudinary credentials missing. Set CLOUDINARY_URL or "
+        "CLOUDINARY_CLOUD_NAME + CLOUDINARY_API_KEY + CLOUDINARY_API_SECRET"
+    )
 
 # ─── Google Scopes ───────────────────────────────────────────
 GOOGLE_SCOPES = [
