@@ -172,12 +172,14 @@ class TestIgPublishFeed:
     @patch("meta_publish._ig_publish_container", return_value="media_final")
     @patch("meta_publish._ig_wait_for_container_ready")
     @patch("meta_publish._ig_create_container", return_value="container_4")
-    def test_image_reels_uses_reels_container(self, mock_create, mock_wait, mock_publish):
-        """post_type=REELS with image → still sends as REELS container."""
+    def test_image_reels_still_sends_as_image(self, mock_create, mock_wait, mock_publish):
+        """post_type=REELS with image → IG Reels don't support images, sends as regular image."""
         result = ig_publish_feed("https://example.com/img.jpg", "cap", "image/jpeg", "REELS")
 
         assert result == "media_final"
-        mock_create.assert_called_once_with("https://example.com/img.jpg", "cap", True)
+        # is_video=False because mime is image, regardless of post_type
+        mock_create.assert_called_once_with("https://example.com/img.jpg", "cap", False)
+        mock_wait.assert_called_once_with("container_4", is_video=False)
 
     @patch("meta_publish._ig_publish_container", return_value="media_final")
     @patch("meta_publish._ig_wait_for_container_ready")
@@ -218,19 +220,39 @@ class TestFbPublishFeed:
         assert call_data["published"] == "true"
 
     @patch("meta_publish.requests.post")
-    def test_video_reels_uses_video_reels_endpoint(self, mock_post):
-        """post_type=REELS + video should use /{page_id}/video_reels."""
-        mock_post.return_value = _mock_response({"id": "fb_reel_1"})
+    def test_video_reels_uses_3_phase_upload(self, mock_post):
+        """post_type=REELS + video should use 3-phase upload to /{page_id}/video_reels."""
+        mock_post.side_effect = [
+            # Phase 1: start
+            _mock_response({"video_id": "vid_123", "upload_url": "https://rupload.facebook.com/video-upload/v21.0/vid_123"}),
+            # Phase 2: transfer
+            _mock_response({"success": True}),
+            # Phase 3: finish
+            _mock_response({"success": True}),
+        ]
 
         result = fb_publish_feed("https://example.com/vid.mp4", "reel desc", "video/mp4", "REELS")
 
-        assert result == "fb_reel_1"
-        # Check endpoint
-        call_url = mock_post.call_args[0][0]
-        assert "/video_reels" in call_url
-        call_data = mock_post.call_args[1]["data"]
-        assert call_data["video_url"] == "https://example.com/vid.mp4"
-        assert call_data["description"] == "reel desc"
+        assert result == "vid_123"
+        assert mock_post.call_count == 3
+
+        # Phase 1: start
+        start_call = mock_post.call_args_list[0]
+        assert "/video_reels" in start_call[0][0]
+        assert start_call[1]["data"]["upload_phase"] == "start"
+
+        # Phase 2: transfer via file_url header
+        transfer_call = mock_post.call_args_list[1]
+        assert "rupload.facebook.com" in transfer_call[0][0]
+        assert transfer_call[1]["headers"]["file_url"] == "https://example.com/vid.mp4"
+
+        # Phase 3: finish
+        finish_call = mock_post.call_args_list[2]
+        assert "/video_reels" in finish_call[0][0]
+        assert finish_call[1]["data"]["upload_phase"] == "finish"
+        assert finish_call[1]["data"]["video_id"] == "vid_123"
+        assert finish_call[1]["data"]["description"] == "reel desc"
+        assert finish_call[1]["data"]["video_state"] == "PUBLISHED"
 
     @patch("meta_publish.requests.post")
     def test_photo_reels_falls_back_to_photo(self, mock_post):
@@ -281,23 +303,64 @@ class TestFbPublishFeed:
 
 class TestFbPublishReel:
     @patch("meta_publish.requests.post")
-    def test_reel_endpoint_and_params(self, mock_post):
-        mock_post.return_value = _mock_response({"id": "reel_99"})
+    def test_reel_3_phase_workflow(self, mock_post):
+        """Full 3-phase workflow: start → transfer → finish."""
+        mock_post.side_effect = [
+            _mock_response({"video_id": "vid_99", "upload_url": "https://rupload.facebook.com/video-upload/v21.0/vid_99"}),
+            _mock_response({"success": True}),
+            _mock_response({"success": True}),
+        ]
 
         result = _fb_publish_reel("https://example.com/vid.mp4", "reel caption")
 
-        assert result == "reel_99"
-        call_url = mock_post.call_args[0][0]
-        assert call_url.endswith("/video_reels")
-        call_data = mock_post.call_args[1]["data"]
-        assert call_data["video_url"] == "https://example.com/vid.mp4"
-        assert call_data["description"] == "reel caption"
+        assert result == "vid_99"
+        assert mock_post.call_count == 3
+
+        # Verify transfer uses rupload URL with file_url header
+        transfer_call = mock_post.call_args_list[1]
+        assert transfer_call[0][0] == "https://rupload.facebook.com/video-upload/v21.0/vid_99"
+        assert transfer_call[1]["headers"]["file_url"] == "https://example.com/vid.mp4"
 
     @patch("meta_publish.requests.post")
-    def test_reel_api_error(self, mock_post):
+    def test_reel_start_phase_error(self, mock_post):
+        """Error in start phase should raise immediately."""
         resp = _mock_response({}, status_code=400, ok=False)
         resp.raise_for_status.side_effect = Exception("400 Bad Request")
         mock_post.return_value = resp
 
         with pytest.raises(Exception, match="400"):
             _fb_publish_reel("https://example.com/vid.mp4", "cap")
+
+        # Only one call (start phase failed)
+        assert mock_post.call_count == 1
+
+    @patch("meta_publish.requests.post")
+    def test_reel_transfer_phase_error(self, mock_post):
+        """Error in transfer phase should raise after start succeeds."""
+        transfer_err = _mock_response({}, status_code=500, ok=False)
+        transfer_err.raise_for_status.side_effect = Exception("500 Server Error")
+        mock_post.side_effect = [
+            _mock_response({"video_id": "vid_100", "upload_url": "https://rupload.facebook.com/video-upload/v21.0/vid_100"}),
+            transfer_err,
+        ]
+
+        with pytest.raises(Exception, match="500"):
+            _fb_publish_reel("https://example.com/vid.mp4", "cap")
+
+        assert mock_post.call_count == 2
+
+    @patch("meta_publish.requests.post")
+    def test_reel_finish_phase_error(self, mock_post):
+        """Error in finish phase should raise after transfer succeeds."""
+        finish_err = _mock_response({}, status_code=403, ok=False)
+        finish_err.raise_for_status.side_effect = Exception("403 Forbidden")
+        mock_post.side_effect = [
+            _mock_response({"video_id": "vid_101", "upload_url": "https://rupload.facebook.com/video-upload/v21.0/vid_101"}),
+            _mock_response({"success": True}),
+            finish_err,
+        ]
+
+        with pytest.raises(Exception, match="403"):
+            _fb_publish_reel("https://example.com/vid.mp4", "cap")
+
+        assert mock_post.call_count == 3

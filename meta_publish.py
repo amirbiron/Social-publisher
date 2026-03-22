@@ -12,6 +12,7 @@ import requests
 
 from config import (
     META_BASE_URL,
+    META_API_VERSION,
     IG_USER_ID,
     IG_ACCESS_TOKEN,
     FB_PAGE_ID,
@@ -40,19 +41,17 @@ def ig_publish_feed(
 ) -> str:
     """
     מפרסם פוסט באינסטגרם.
-    post_type=REELS → תמיד Reel (וידאו חייב להיות Reel ב-API).
-    post_type=FEED  → תמונה רגילה; וידאו עדיין נשלח כ-Reel (אין דרך אחרת ב-API).
+    וידאו תמיד נשלח כ-REELS (אילוץ API — אין דרך אחרת).
+    תמונה תמיד נשלחת כ-Feed (IG Reels לא תומך בתמונות).
     מחזיר את ה-media ID של הפוסט שפורסם.
     """
     is_video = mime_type in VIDEO_MIMES
-    # IG API: וידאו תמיד חייב להיות REELS, גם אם post_type=FEED
-    use_reels = is_video or post_type == POST_TYPE_REELS
 
     # ── שלב 1: יצירת Container ──
-    container_id = _ig_create_container(cloud_url, caption, use_reels)
+    container_id = _ig_create_container(cloud_url, caption, is_video)
 
     # ── שלב 1.5: חכה לעיבוד (וידאו + תמונות) ──
-    _ig_wait_for_container_ready(container_id, is_video=use_reels)
+    _ig_wait_for_container_ready(container_id, is_video=is_video)
 
     # ── שלב 2: פרסום ──
     result_id = _ig_publish_container(container_id)
@@ -210,19 +209,55 @@ def _fb_publish_video(cloud_url: str, caption: str) -> str:
 
 
 def _fb_publish_reel(cloud_url: str, caption: str) -> str:
-    """פרסום Reel בעמוד פייסבוק."""
-    url = f"{META_BASE_URL}/{FB_PAGE_ID}/video_reels"
-    data = {
-        "video_url": cloud_url,
-        "description": caption,
-        "access_token": FB_PAGE_ACCESS_TOKEN,
-    }
+    """
+    פרסום Reel בעמוד פייסבוק — 3 שלבים:
+      1. start  → מקבלים video_id + upload_url
+      2. transfer → שולחים את הוידאו (file_url header עבור CDN)
+      3. finish  → מפרסמים עם description
+    """
+    base = f"{META_BASE_URL}/{FB_PAGE_ID}/video_reels"
 
-    resp = requests.post(url, data=data, timeout=TIMEOUT_LONG)
+    # ── שלב 1: start ──
+    resp = requests.post(
+        base,
+        data={"upload_phase": "start", "access_token": FB_PAGE_ACCESS_TOKEN},
+        timeout=TIMEOUT_SHORT,
+    )
     if not resp.ok:
-        logger.error(f"FB publish reel failed ({resp.status_code}): {resp.text}")
+        logger.error(f"FB reel start failed ({resp.status_code}): {resp.text}")
         resp.raise_for_status()
 
-    result_id = resp.json().get("id")
-    logger.info(f"FB reel published: {result_id}")
-    return result_id
+    start_data = resp.json()
+    video_id = start_data["video_id"]
+    upload_url = start_data["upload_url"]
+    logger.info(f"FB reel start: video_id={video_id}")
+
+    # ── שלב 2: transfer (file_url header עבור CDN-hosted video) ──
+    headers = {
+        "Authorization": f"OAuth {FB_PAGE_ACCESS_TOKEN}",
+        "file_url": cloud_url,
+    }
+    resp = requests.post(upload_url, headers=headers, timeout=TIMEOUT_LONG)
+    if not resp.ok:
+        logger.error(f"FB reel transfer failed ({resp.status_code}): {resp.text}")
+        resp.raise_for_status()
+    logger.info(f"FB reel transfer done for video_id={video_id}")
+
+    # ── שלב 3: finish ──
+    resp = requests.post(
+        base,
+        data={
+            "upload_phase": "finish",
+            "video_id": video_id,
+            "video_state": "PUBLISHED",
+            "description": caption,
+            "access_token": FB_PAGE_ACCESS_TOKEN,
+        },
+        timeout=TIMEOUT_LONG,
+    )
+    if not resp.ok:
+        logger.error(f"FB reel finish failed ({resp.status_code}): {resp.text}")
+        resp.raise_for_status()
+
+    logger.info(f"FB reel published: {video_id}")
+    return video_id
