@@ -37,6 +37,7 @@ def ig_publish_feed(
 ) -> str:
     """
     מפרסם פוסט Feed באינסטגרם.
+    וידאו מפורסם כ-REELS (הדרך היחידה שנתמכת ב-API).
     מחזיר את ה-media ID של הפוסט שפורסם.
     """
     is_video = mime_type in VIDEO_MIMES
@@ -65,7 +66,7 @@ def _ig_create_container(
 
     if is_video:
         data["video_url"] = cloud_url
-        data["media_type"] = "VIDEO"
+        data["media_type"] = "REELS"
     else:
         data["image_url"] = cloud_url
 
