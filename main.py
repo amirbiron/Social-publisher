@@ -18,6 +18,7 @@ from config import (
     TZ_IL,
     COL_STATUS,
     COL_NETWORK,
+    COL_POST_TYPE,
     COL_PUBLISH_AT,
     COL_CAPTION_IG,
     COL_CAPTION_FB,
@@ -101,6 +102,7 @@ def process_row(
     מעבד שורה אחת: נועל → מוריד → מעלה → מפרסם → מעדכן.
     """
     network = get_cell(row, header, COL_NETWORK).strip().upper()
+    post_type = get_cell(row, header, COL_POST_TYPE).strip()
     drive_file_id = get_cell(row, header, COL_DRIVE_FILE_ID).strip()
     caption_ig = get_cell(row, header, COL_CAPTION_IG)
     caption_fb = get_cell(row, header, COL_CAPTION_FB)
@@ -139,7 +141,7 @@ def process_row(
         if network == NETWORK_IG:
             caption = caption_ig or caption_fb  # fallback
             logger.info(f"Row {row_id}: Publishing to Instagram...")
-            result_id = ig_publish_feed(cloud_url, caption, mime_type)
+            result_id = ig_publish_feed(cloud_url, caption, mime_type, post_type)
         else:
             caption = caption_fb or caption_ig  # fallback
             logger.info(f"Row {row_id}: Publishing to Facebook...")

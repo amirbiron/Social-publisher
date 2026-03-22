@@ -34,15 +34,18 @@ def ig_publish_feed(
     cloud_url: str,
     caption: str,
     mime_type: str,
+    post_type: str = "",
 ) -> str:
     """
     מפרסם פוסט Feed באינסטגרם.
+    post_type: "reel" → media_type=REELS (גם לתמונות).
+               ריק → תמונה רגילה או REELS לווידאו.
     מחזיר את ה-media ID של הפוסט שפורסם.
     """
     is_video = mime_type in VIDEO_MIMES
 
     # ── שלב 1: יצירת Container ──
-    container_id = _ig_create_container(cloud_url, caption, is_video)
+    container_id = _ig_create_container(cloud_url, caption, is_video, post_type)
 
     # ── שלב 1.5: חכה לעיבוד (וידאו + תמונות) ──
     _ig_wait_for_container_ready(container_id, is_video=is_video)
@@ -54,7 +57,7 @@ def ig_publish_feed(
 
 
 def _ig_create_container(
-    cloud_url: str, caption: str, is_video: bool
+    cloud_url: str, caption: str, is_video: bool, post_type: str = ""
 ) -> str:
     """יצירת media container באינסטגרם."""
     url = f"{META_BASE_URL}/{IG_USER_ID}/media"
@@ -65,7 +68,11 @@ def _ig_create_container(
 
     if is_video:
         data["video_url"] = cloud_url
-        data["media_type"] = "VIDEO"
+        data["media_type"] = "REELS"
+    elif post_type.upper() == "REEL":
+        # תמונה כ-Reel (carousel-style) — לא נפוץ, אבל נתמך
+        data["image_url"] = cloud_url
+        data["media_type"] = "REELS"
     else:
         data["image_url"] = cloud_url
 
