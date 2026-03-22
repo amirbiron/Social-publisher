@@ -44,9 +44,8 @@ def ig_publish_feed(
     # ── שלב 1: יצירת Container ──
     container_id = _ig_create_container(cloud_url, caption, is_video)
 
-    # ── שלב 1.5: וידאו — חכה לעיבוד ──
-    if is_video:
-        _ig_wait_for_video_processing(container_id)
+    # ── שלב 1.5: חכה לעיבוד (וידאו + תמונות) ──
+    _ig_wait_for_container_ready(container_id, is_video=is_video)
 
     # ── שלב 2: פרסום ──
     result_id = _ig_publish_container(container_id)
@@ -80,14 +79,15 @@ def _ig_create_container(
     return container_id
 
 
-def _ig_wait_for_video_processing(
+def _ig_wait_for_container_ready(
     container_id: str,
+    is_video: bool = False,
     max_wait: int = 300,
-    interval: int = 10,
+    interval: int = 5,
 ) -> None:
     """
-    וידאו באינסטגרם עובר עיבוד אחרי יצירת ה-container.
-    צריך לחכות עד שהסטטוס הוא FINISHED לפני הפרסום.
+    ממתין עד שה-container מוכן לפרסום (סטטוס FINISHED).
+    גם תמונות צריכות עיבוד — בד"כ 2-10 שניות, וידאו יותר.
     """
     url = f"{META_BASE_URL}/{container_id}"
     params = {
@@ -101,7 +101,7 @@ def _ig_wait_for_video_processing(
         resp.raise_for_status()
         status = resp.json().get("status_code")
 
-        logger.debug(f"IG video container {container_id}: status={status}")
+        logger.info(f"IG container {container_id}: status={status} ({elapsed}s)")
 
         if status == "FINISHED":
             return
@@ -109,14 +109,14 @@ def _ig_wait_for_video_processing(
         if status == "ERROR":
             error_msg = resp.json().get("status", "Unknown error")
             raise RuntimeError(
-                f"Instagram video processing failed: {error_msg}"
+                f"Instagram container processing failed: {error_msg}"
             )
 
         time.sleep(interval)
         elapsed += interval
 
     raise TimeoutError(
-        f"Instagram video processing timed out after {max_wait}s "
+        f"Instagram container processing timed out after {max_wait}s "
         f"for container {container_id}"
     )
 
