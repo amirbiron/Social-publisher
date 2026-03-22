@@ -2,7 +2,7 @@
 meta_publish.py — פרסום ל-Instagram ו-Facebook דרך Graph API
 
 Instagram: 2 קריאות (create container → publish)
-Facebook: תמונה = /photos, וידאו = /videos
+Facebook: תמונה = /photos, וידאו = /videos, ריל = /video_reels
 """
 
 import logging
@@ -17,6 +17,8 @@ from config import (
     FB_PAGE_ID,
     FB_PAGE_ACCESS_TOKEN,
     VIDEO_MIMES,
+    POST_TYPE_FEED,
+    POST_TYPE_REELS,
 )
 
 logger = logging.getLogger(__name__)
@@ -27,30 +29,34 @@ TIMEOUT_LONG = 180   # וידאו (העלאה + עיבוד)
 
 
 # ═══════════════════════════════════════════════════════════════
-#  Instagram — Feed (תמונה / וידאו)
+#  Instagram — Feed / Reels
 # ═══════════════════════════════════════════════════════════════
 
 def ig_publish_feed(
     cloud_url: str,
     caption: str,
     mime_type: str,
+    post_type: str = POST_TYPE_FEED,
 ) -> str:
     """
-    מפרסם פוסט Feed באינסטגרם.
-    וידאו מפורסם כ-REELS (הדרך היחידה שנתמכת ב-API).
+    מפרסם פוסט באינסטגרם.
+    post_type=REELS → תמיד Reel (וידאו חייב להיות Reel ב-API).
+    post_type=FEED  → תמונה רגילה; וידאו עדיין נשלח כ-Reel (אין דרך אחרת ב-API).
     מחזיר את ה-media ID של הפוסט שפורסם.
     """
     is_video = mime_type in VIDEO_MIMES
+    # IG API: וידאו תמיד חייב להיות REELS, גם אם post_type=FEED
+    use_reels = is_video or post_type == POST_TYPE_REELS
 
     # ── שלב 1: יצירת Container ──
-    container_id = _ig_create_container(cloud_url, caption, is_video)
+    container_id = _ig_create_container(cloud_url, caption, use_reels)
 
     # ── שלב 1.5: חכה לעיבוד (וידאו + תמונות) ──
-    _ig_wait_for_container_ready(container_id, is_video=is_video)
+    _ig_wait_for_container_ready(container_id, is_video=use_reels)
 
     # ── שלב 2: פרסום ──
     result_id = _ig_publish_container(container_id)
-    logger.info(f"Instagram published: {result_id}")
+    logger.info(f"Instagram published: {result_id} (post_type={post_type})")
     return result_id
 
 
@@ -138,21 +144,26 @@ def _ig_publish_container(container_id: str) -> str:
 
 
 # ═══════════════════════════════════════════════════════════════
-#  Facebook Page — Feed (תמונה / וידאו)
+#  Facebook Page — Feed / Reels
 # ═══════════════════════════════════════════════════════════════
 
 def fb_publish_feed(
     cloud_url: str,
     caption: str,
     mime_type: str,
+    post_type: str = POST_TYPE_FEED,
 ) -> str:
     """
-    מפרסם פוסט Feed בעמוד פייסבוק.
+    מפרסם פוסט בעמוד פייסבוק.
+    post_type=REELS → מפרסם כ-Reel (וידאו בלבד).
+    post_type=FEED  → תמונה רגילה או וידאו רגיל.
     מחזיר post_id / video_id.
     """
     is_video = mime_type in VIDEO_MIMES
 
-    if is_video:
+    if post_type == POST_TYPE_REELS and is_video:
+        return _fb_publish_reel(cloud_url, caption)
+    elif is_video:
         return _fb_publish_video(cloud_url, caption)
     else:
         return _fb_publish_photo(cloud_url, caption)
@@ -179,7 +190,7 @@ def _fb_publish_photo(cloud_url: str, caption: str) -> str:
 
 
 def _fb_publish_video(cloud_url: str, caption: str) -> str:
-    """פרסום וידאו בעמוד פייסבוק."""
+    """פרסום וידאו רגיל בעמוד פייסבוק."""
     url = f"{META_BASE_URL}/{FB_PAGE_ID}/videos"
     data = {
         "file_url": cloud_url,
@@ -195,4 +206,23 @@ def _fb_publish_video(cloud_url: str, caption: str) -> str:
 
     result_id = resp.json().get("id")
     logger.info(f"FB video published: {result_id}")
+    return result_id
+
+
+def _fb_publish_reel(cloud_url: str, caption: str) -> str:
+    """פרסום Reel בעמוד פייסבוק."""
+    url = f"{META_BASE_URL}/{FB_PAGE_ID}/video_reels"
+    data = {
+        "video_url": cloud_url,
+        "description": caption,
+        "access_token": FB_PAGE_ACCESS_TOKEN,
+    }
+
+    resp = requests.post(url, data=data, timeout=TIMEOUT_LONG)
+    if not resp.ok:
+        logger.error(f"FB publish reel failed ({resp.status_code}): {resp.text}")
+        resp.raise_for_status()
+
+    result_id = resp.json().get("id")
+    logger.info(f"FB reel published: {result_id}")
     return result_id

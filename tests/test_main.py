@@ -22,12 +22,27 @@ from main import (
 
 # ─── Header fixture ──────────────────────────────────────────
 HEADER = [
-    "id", "status", "network", "publish_at",
+    "id", "status", "network", "post_type", "publish_at",
     "caption_ig", "caption_fb", "drive_file_id",
     "cloudinary_url", "result", "error",
 ]
 
 NOW_UTC = datetime(2026, 3, 22, 12, 0, 0, tzinfo=timezone.utc)
+
+
+def _make_row(
+    network="IG",
+    post_type="FEED",
+    drive_id="abc123",
+    caption_ig="hello",
+    caption_fb="",
+    status=STATUS_READY,
+):
+    """Build a row matching HEADER order."""
+    return [
+        "1", status, network, post_type, "2026-03-22 10:00",
+        caption_ig, caption_fb, drive_id, "", "", "",
+    ]
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -57,7 +72,7 @@ class TestIsDue:
 
 class TestGetCell:
     def test_returns_value(self):
-        row = ["1", "READY", "IG", "2026-03-22"]
+        row = _make_row()
         assert get_cell(row, HEADER, "network") == "IG"
 
     def test_missing_column_returns_default(self):
@@ -74,21 +89,16 @@ class TestGetCell:
 
 
 # ═══════════════════════════════════════════════════════════════
-#  process_row — Instagram image (success)
+#  process_row — success paths
 # ═══════════════════════════════════════════════════════════════
 
 class TestProcessRowSuccess:
-    def _make_row(self, network="IG", drive_id="abc123", caption_ig="hello", caption_fb=""):
-        # Returns row matching HEADER order
-        return ["1", STATUS_READY, network, "2026-03-22 10:00",
-                caption_ig, caption_fb, drive_id, "", "", ""]
-
     @patch("main.sheets_update_cells")
     @patch("main.upload_to_cloudinary", return_value="https://res.cloudinary.com/x/image/upload/v1/social-publisher/abc.jpg")
     @patch("main.drive_download_with_metadata", return_value=(b"fake-img", {"mimeType": "image/jpeg", "name": "pic.jpg"}))
     @patch("main.ig_publish_feed", return_value="media_111")
-    def test_ig_image_success(self, mock_ig, mock_drive, mock_cloud, mock_sheets):
-        row = self._make_row()
+    def test_ig_image_feed(self, mock_ig, mock_drive, mock_cloud, mock_sheets):
+        row = _make_row()
         process_row(row, HEADER, 2)
 
         mock_drive.assert_called_once_with("abc123")
@@ -97,8 +107,8 @@ class TestProcessRowSuccess:
             "https://res.cloudinary.com/x/image/upload/v1/social-publisher/abc.jpg",
             "hello",
             "image/jpeg",
+            "FEED",
         )
-        # Status updated to POSTED
         posted_call = mock_sheets.call_args_list[-1]
         assert posted_call[0][1]["status"] == STATUS_POSTED
         assert posted_call[0][1]["result"] == "media_111"
@@ -107,17 +117,62 @@ class TestProcessRowSuccess:
     @patch("main.upload_to_cloudinary", return_value="https://example.com/vid.mp4")
     @patch("main.drive_download_with_metadata", return_value=(b"fake-vid", {"mimeType": "video/mp4", "name": "vid.mp4"}))
     @patch("main.fb_publish_feed", return_value="post_222")
-    def test_fb_video_success(self, mock_fb, mock_drive, mock_cloud, mock_sheets):
-        row = self._make_row(network="FB", caption_ig="", caption_fb="fb caption")
+    def test_fb_video_feed(self, mock_fb, mock_drive, mock_cloud, mock_sheets):
+        row = _make_row(network="FB", caption_ig="", caption_fb="fb caption")
         process_row(row, HEADER, 3)
 
         mock_fb.assert_called_once_with(
             "https://example.com/vid.mp4",
             "fb caption",
             "video/mp4",
+            "FEED",
         )
         posted_call = mock_sheets.call_args_list[-1]
         assert posted_call[0][1]["status"] == STATUS_POSTED
+
+    @patch("main.sheets_update_cells")
+    @patch("main.upload_to_cloudinary", return_value="https://example.com/vid.mp4")
+    @patch("main.drive_download_with_metadata", return_value=(b"fake-vid", {"mimeType": "video/mp4", "name": "vid.mp4"}))
+    @patch("main.fb_publish_feed", return_value="reel_333")
+    def test_fb_video_reels(self, mock_fb, mock_drive, mock_cloud, mock_sheets):
+        """post_type=REELS should be passed through to fb_publish_feed."""
+        row = _make_row(network="FB", post_type="REELS", caption_ig="", caption_fb="reel caption")
+        process_row(row, HEADER, 3)
+
+        mock_fb.assert_called_once_with(
+            "https://example.com/vid.mp4",
+            "reel caption",
+            "video/mp4",
+            "REELS",
+        )
+
+    @patch("main.sheets_update_cells")
+    @patch("main.upload_to_cloudinary", return_value="https://example.com/vid.mp4")
+    @patch("main.drive_download_with_metadata", return_value=(b"fake-vid", {"mimeType": "video/mp4", "name": "vid.mp4"}))
+    @patch("main.ig_publish_feed", return_value="media_444")
+    def test_ig_video_reels(self, mock_ig, mock_drive, mock_cloud, mock_sheets):
+        """post_type=REELS on IG should pass through."""
+        row = _make_row(post_type="REELS")
+        process_row(row, HEADER, 2)
+
+        mock_ig.assert_called_once_with(
+            "https://example.com/vid.mp4",
+            "hello",
+            "video/mp4",
+            "REELS",
+        )
+
+    @patch("main.sheets_update_cells")
+    @patch("main.upload_to_cloudinary", return_value="https://example.com/img.jpg")
+    @patch("main.drive_download_with_metadata", return_value=(b"fake-img", {"mimeType": "image/jpeg", "name": "img.jpg"}))
+    @patch("main.ig_publish_feed", return_value="media_555")
+    def test_empty_post_type_defaults_to_feed(self, mock_ig, mock_drive, mock_cloud, mock_sheets):
+        """If post_type column is empty, should default to FEED."""
+        row = _make_row(post_type="")
+        process_row(row, HEADER, 2)
+
+        mock_ig.assert_called_once()
+        assert mock_ig.call_args[0][3] == "FEED"
 
     @patch("main.sheets_update_cells")
     @patch("main.upload_to_cloudinary", return_value="https://example.com/img.jpg")
@@ -125,7 +180,7 @@ class TestProcessRowSuccess:
     @patch("main.ig_publish_feed", return_value="media_333")
     def test_caption_fallback_ig_uses_fb_if_empty(self, mock_ig, mock_drive, mock_cloud, mock_sheets):
         """If caption_ig is empty, should fallback to caption_fb."""
-        row = self._make_row(caption_ig="", caption_fb="fallback text")
+        row = _make_row(caption_ig="", caption_fb="fallback text")
         process_row(row, HEADER, 2)
 
         mock_ig.assert_called_once()
@@ -139,8 +194,7 @@ class TestProcessRowSuccess:
 class TestProcessRowErrors:
     @patch("main.sheets_update_cells")
     def test_missing_drive_file_id(self, mock_sheets):
-        row = ["1", STATUS_READY, "IG", "2026-03-22 10:00",
-               "cap", "", "", "", "", ""]
+        row = _make_row(drive_id="")
         process_row(row, HEADER, 2)
 
         mock_sheets.assert_called_once()
@@ -149,8 +203,7 @@ class TestProcessRowErrors:
 
     @patch("main.sheets_update_cells")
     def test_unknown_network(self, mock_sheets):
-        row = ["1", STATUS_READY, "TIKTOK", "2026-03-22 10:00",
-               "cap", "", "abc123", "", "", ""]
+        row = _make_row(network="TIKTOK")
         process_row(row, HEADER, 2)
 
         assert mock_sheets.call_args[0][1]["status"] == STATUS_ERROR
@@ -158,13 +211,10 @@ class TestProcessRowErrors:
 
     @patch("main.sheets_update_cells")
     @patch("main.drive_download_with_metadata", side_effect=Exception("Drive API error"))
-    def test_drive_error_marks_error_and_continues(self, mock_drive, mock_sheets):
-        row = ["1", STATUS_READY, "IG", "2026-03-22 10:00",
-               "cap", "", "bad_id", "", "", ""]
-        # Should NOT raise
+    def test_drive_error_marks_error(self, mock_drive, mock_sheets):
+        row = _make_row()
         process_row(row, HEADER, 2)
 
-        # Last call should mark ERROR
         last_call = mock_sheets.call_args_list[-1]
         assert last_call[0][1]["status"] == STATUS_ERROR
         assert "Drive API error" in last_call[0][1]["error"]
@@ -174,8 +224,7 @@ class TestProcessRowErrors:
     @patch("main.drive_download_with_metadata", return_value=(b"img", {"mimeType": "image/jpeg", "name": "x.jpg"}))
     @patch("main.ig_publish_feed", side_effect=Exception("API rate limit"))
     def test_publish_error_marks_error(self, mock_ig, mock_drive, mock_cloud, mock_sheets):
-        row = ["1", STATUS_READY, "IG", "2026-03-22 10:00",
-               "cap", "", "abc", "", "", ""]
+        row = _make_row()
         process_row(row, HEADER, 2)
 
         last_call = mock_sheets.call_args_list[-1]
@@ -185,11 +234,9 @@ class TestProcessRowErrors:
     @patch("main.sheets_update_cells")
     @patch("main.upload_to_cloudinary", return_value="https://example.com/img.jpg")
     @patch("main.drive_download_with_metadata", return_value=(b"img", {"mimeType": "image/jpeg", "name": "x.jpg"}))
-    @patch("main.ig_publish_feed", side_effect=Exception("fail"))
+    @patch("main.ig_publish_feed", side_effect=Exception("x" * 600))
     def test_long_error_message_truncated(self, mock_ig, mock_drive, mock_cloud, mock_sheets):
-        row = ["1", STATUS_READY, "IG", "2026-03-22 10:00",
-               "cap", "", "abc", "", "", ""]
-        mock_ig.side_effect = Exception("x" * 600)
+        row = _make_row()
         process_row(row, HEADER, 2)
 
         last_call = mock_sheets.call_args_list[-1]
@@ -210,20 +257,19 @@ class TestMainLoop:
             HEADER,
             [
                 # row 2: READY + due → should process
-                ["1", "READY", "IG", "2026-03-20 10:00", "cap", "", "abc", "", "", ""],
+                _make_row(),
                 # row 3: POSTED → skip
-                ["2", "POSTED", "IG", "2026-03-20 10:00", "cap", "", "abc", "", "", ""],
-                # row 4: READY + future → skip
-                ["3", "READY", "IG", "2099-01-01 10:00", "cap", "", "abc", "", "", ""],
+                _make_row(status="POSTED"),
+                # row 4: READY + future → skip (we override publish_at below)
+                ["3", "READY", "IG", "FEED", "2099-01-01 10:00", "cap", "", "abc", "", "", ""],
                 # row 5: READY + due → should process
-                ["4", "READY", "FB", "2026-03-20 10:00", "", "cap", "abc", "", "", ""],
+                _make_row(network="FB", caption_ig="", caption_fb="cap"),
             ],
         )
 
         main()
 
         assert mock_process.call_count == 2
-        # Verify correct rows were processed (row numbers 2 and 5)
         assert mock_process.call_args_list[0][0][2] == 2
         assert mock_process.call_args_list[1][0][2] == 5
 
@@ -238,18 +284,14 @@ class TestMainLoop:
     @patch("main.cleanup_old_cloudinary_assets", return_value=0)
     @patch("main.process_row", side_effect=Exception("boom"))
     @patch("main.sheets_read_all_rows")
-    def test_row_error_does_not_crash_loop(self, mock_read, mock_process, mock_cleanup):
-        """process_row catches its own errors internally.
-        But even if it leaked, main() iterates all rows."""
+    def test_process_row_exception_propagates(self, mock_read, mock_process, mock_cleanup):
+        """main() does not catch exceptions from process_row — if one leaks
+        past process_row's internal try/except, the run aborts."""
         mock_read.return_value = (
             HEADER,
-            [["1", "READY", "IG", "2026-03-20 10:00", "cap", "", "abc", "", "", ""]],
+            [_make_row()],
         )
-        # process_row raises, but main should not crash (it calls process_row
-        # which has its own try/except). This test verifies main doesn't add
-        # extra exception handling that swallows things silently.
-        # If process_row leaks, this would raise — that's fine to know about.
-        with pytest.raises(Exception):
+        with pytest.raises(Exception, match="boom"):
             main()
 
 
@@ -285,8 +327,7 @@ class TestCleanup:
     @patch("main.delete_from_cloudinary", return_value=True)
     def test_deletes_old_posted_assets(self, mock_delete, mock_sheets):
         rows = [
-            # POSTED, old date, has cloudinary_url
-            ["1", "POSTED", "IG", "2026-01-01 10:00", "", "",
+            ["1", "POSTED", "IG", "FEED", "2026-01-01 10:00", "", "",
              "abc", "https://res.cloudinary.com/x/image/upload/v1/social-publisher/old.jpg", "r1", ""],
         ]
         deleted = cleanup_old_cloudinary_assets(HEADER, rows, NOW_UTC)
@@ -296,8 +337,7 @@ class TestCleanup:
     @patch("main.delete_from_cloudinary")
     def test_skips_recent_posts(self, mock_delete):
         rows = [
-            # POSTED but recent date (today)
-            ["1", "POSTED", "IG", "2026-03-22 10:00", "", "",
+            ["1", "POSTED", "IG", "FEED", "2026-03-22 10:00", "", "",
              "abc", "https://res.cloudinary.com/x/image/upload/v1/social-publisher/new.jpg", "r1", ""],
         ]
         deleted = cleanup_old_cloudinary_assets(HEADER, rows, NOW_UTC)
@@ -307,7 +347,7 @@ class TestCleanup:
     @patch("main.delete_from_cloudinary")
     def test_skips_non_posted_rows(self, mock_delete):
         rows = [
-            ["1", "READY", "IG", "2026-01-01 10:00", "", "",
+            ["1", "READY", "IG", "FEED", "2026-01-01 10:00", "", "",
              "abc", "https://res.cloudinary.com/x/image/upload/v1/social-publisher/x.jpg", "", ""],
         ]
         deleted = cleanup_old_cloudinary_assets(HEADER, rows, NOW_UTC)

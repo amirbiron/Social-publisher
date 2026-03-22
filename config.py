@@ -72,6 +72,10 @@ STATUS_ERROR = "ERROR"
 NETWORK_IG = "IG"
 NETWORK_FB = "FB"
 
+# ─── Post Type Values ──────────────────────────────────────
+POST_TYPE_FEED = "FEED"
+POST_TYPE_REELS = "REELS"
+
 # ─── Supported MIME types ────────────────────────────────────
 VIDEO_MIMES = {
     "video/mp4",
