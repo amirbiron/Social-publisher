@@ -159,8 +159,15 @@ def process_row(
         logger.info(f"Row {row_id}: POSTED successfully ({result_id})")
 
     except Exception as e:
-        logger.error(f"Row {row_id}: ERROR — {e}", exc_info=True)
-        _mark_error(header, sheet_row_number, str(e))
+        error_detail = str(e)
+        # Extract Meta API error details from response body
+        if hasattr(e, "response") and e.response is not None:
+            try:
+                error_detail += f" | Meta response: {e.response.text}"
+            except Exception:
+                pass
+        logger.error(f"Row {row_id}: ERROR — {error_detail}", exc_info=True)
+        _mark_error(header, sheet_row_number, error_detail)
 
 
 def _mark_error(header: list[str], sheet_row_number: int, error_msg: str):

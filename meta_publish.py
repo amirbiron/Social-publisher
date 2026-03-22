@@ -71,7 +71,9 @@ def _ig_create_container(
         data["image_url"] = cloud_url
 
     resp = requests.post(url, data=data, timeout=TIMEOUT_SHORT)
-    resp.raise_for_status()
+    if not resp.ok:
+        logger.error(f"IG create container failed ({resp.status_code}): {resp.text}")
+        resp.raise_for_status()
 
     container_id = resp.json()["id"]
     logger.info(f"IG container created: {container_id} (video={is_video})")
@@ -128,7 +130,9 @@ def _ig_publish_container(container_id: str) -> str:
     }
 
     resp = requests.post(url, data=data, timeout=TIMEOUT_SHORT)
-    resp.raise_for_status()
+    if not resp.ok:
+        logger.error(f"IG publish container failed ({resp.status_code}): {resp.text}")
+        resp.raise_for_status()
     return resp.json()["id"]
 
 
@@ -163,7 +167,9 @@ def _fb_publish_photo(cloud_url: str, caption: str) -> str:
     }
 
     resp = requests.post(url, data=data, timeout=TIMEOUT_SHORT)
-    resp.raise_for_status()
+    if not resp.ok:
+        logger.error(f"FB publish photo failed ({resp.status_code}): {resp.text}")
+        resp.raise_for_status()
 
     result = resp.json()
     result_id = result.get("post_id") or result.get("id")
@@ -182,7 +188,9 @@ def _fb_publish_video(cloud_url: str, caption: str) -> str:
     }
 
     resp = requests.post(url, data=data, timeout=TIMEOUT_LONG)
-    resp.raise_for_status()
+    if not resp.ok:
+        logger.error(f"FB publish video failed ({resp.status_code}): {resp.text}")
+        resp.raise_for_status()
 
     result_id = resp.json().get("id")
     logger.info(f"FB video published: {result_id}")
