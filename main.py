@@ -42,6 +42,7 @@ from google_api import (
     drive_download_with_metadata,
 )
 from cloud_storage import upload_to_cloudinary, delete_from_cloudinary
+from media_processor import normalize_media, MediaProcessingError
 from meta_publish import ig_publish_feed, fb_publish_feed
 
 # ─── Logging ─────────────────────────────────────────────────
@@ -135,6 +136,16 @@ def process_row(
             f"Size: {len(file_bytes)} bytes"
         )
 
+        # ── שלב 2.5: נרמול מדיה ──
+        logger.info(f"Row {row_id}: Normalizing media...")
+        file_bytes, mime_type, file_name = normalize_media(
+            file_bytes, mime_type, file_name, post_type
+        )
+        logger.info(
+            f"Row {row_id}: Normalized → {file_name} | "
+            f"MIME: {mime_type} | Size: {len(file_bytes)} bytes"
+        )
+
         # ── שלב 3: העלאה ל-Cloudinary ──
         logger.info(f"Row {row_id}: Uploading to Cloudinary...")
         cloud_url = upload_to_cloudinary(file_bytes, mime_type, file_name)
@@ -163,7 +174,10 @@ def process_row(
         logger.info(f"Row {row_id}: POSTED successfully ({result_id})")
 
     except Exception as e:
-        error_detail = str(e)
+        error_detail = (
+            f"[{e.error_code}] {e}" if isinstance(e, MediaProcessingError)
+            else str(e)
+        )
         # Extract Meta API error details from response body
         if hasattr(e, "response") and e.response is not None:
             try:
