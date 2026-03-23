@@ -236,6 +236,45 @@ def api_get_posts():
         return jsonify({"error": str(e)}), 500
 
 
+@app.route("/api/posts/status", methods=["GET"])
+def api_get_posts_status():
+    """מחזיר רק ID וסטטוס לכל פוסט — אנדפוינט קל לפולינג."""
+    try:
+        header, rows = sheets_read_all_rows()
+        if not header:
+            return jsonify({"statuses": []})
+
+        try:
+            id_col = header.index(COL_ID)
+        except ValueError:
+            return jsonify({"statuses": []})
+
+        try:
+            status_col = header.index(COL_STATUS)
+        except ValueError:
+            return jsonify({"statuses": []})
+
+        try:
+            error_col = header.index(COL_ERROR)
+        except ValueError:
+            error_col = None
+
+        statuses = []
+        for row in rows:
+            post_id = row[id_col] if id_col < len(row) else ""
+            post_status = row[status_col] if status_col < len(row) else ""
+            entry = {"id": post_id, "status": post_status}
+            if error_col is not None:
+                entry["error"] = row[error_col] if error_col < len(row) else ""
+            statuses.append(entry)
+
+        return jsonify({"statuses": statuses})
+
+    except Exception as e:
+        logger.error(f"Error fetching post statuses: {e}", exc_info=True)
+        return jsonify({"error": str(e)}), 500
+
+
 def _normalize_publish_at(value: str) -> str:
     """
     Convert a publish_at value (potentially ISO 8601 with timezone) to

@@ -1206,6 +1206,26 @@ body {
   50% { opacity: 0.5; }
 }
 
+@keyframes statusFlash {
+  0% { background-color: var(--color-accent-soft); }
+  100% { background-color: transparent; }
+}
+
+/* ─── Status Change Highlight ─────────────────────────────── */
+tr.status-changed {
+  animation: statusFlash 1.5s ease-out;
+}
+
+.post-card.status-changed {
+  animation: statusFlash 1.5s ease-out;
+  outline: 2px solid var(--color-accent);
+  outline-offset: -2px;
+}
+
+.post-card.status-changed .badge {
+  animation: pulse 0.6s ease-in-out 2;
+}
+
 /* ─── Utility Classes ───────────────────────────────────────── */
 .hidden { display: none !important; }
 .text-center { text-align: center; }
