@@ -67,6 +67,42 @@
         </div>
       </div>
 
+      <!-- ─── Filter Bar ─── -->
+      <div class="filter-bar" id="filter-bar">
+        <div class="filter-group">
+          <label class="filter-label">סטטוס</label>
+          <select class="filter-select" id="filter-status" onchange="applyFilters()">
+            <option value="">הכל</option>
+            <option value="READY">ממתין</option>
+            <option value="IN_PROGRESS">בתהליך</option>
+            <option value="POSTED">פורסם</option>
+            <option value="ERROR">שגיאה</option>
+          </select>
+        </div>
+        <div class="filter-group">
+          <label class="filter-label">רשת</label>
+          <select class="filter-select" id="filter-network" onchange="applyFilters()">
+            <option value="">הכל</option>
+            <option value="IG">אינסטגרם</option>
+            <option value="FB">פייסבוק</option>
+            <option value="IG+FB">IG+FB</option>
+          </select>
+        </div>
+        <div class="filter-group">
+          <label class="filter-label">מתאריך</label>
+          <input type="date" class="filter-input" id="filter-date-from" onchange="applyFilters()">
+        </div>
+        <div class="filter-group">
+          <label class="filter-label">עד תאריך</label>
+          <input type="date" class="filter-input" id="filter-date-to" onchange="applyFilters()">
+        </div>
+        <div class="filter-group filter-group-search">
+          <label class="filter-label">חיפוש</label>
+          <input type="text" class="filter-input" id="filter-search" placeholder="חיפוש בקפשן..." oninput="applyFilters()">
+        </div>
+        <button class="btn btn-ghost btn-sm filter-clear" onclick="clearFilters()" title="נקה סינון">&#10005; נקה</button>
+      </div>
+
       <div class="card">
         <div id="posts-loading" class="loading-overlay">
           <div class="spinner"></div>
@@ -154,12 +190,18 @@
 
       <div class="form-group">
         <label class="form-label">קפשן אינסטגרם</label>
-        <textarea class="form-textarea" id="form-caption-ig" rows="3" placeholder="טקסט הפוסט לאינסטגרם..."></textarea>
+        <textarea class="form-textarea" id="form-caption-ig" rows="3" placeholder="טקסט הפוסט לאינסטגרם..." oninput="updateCharCounter('ig')"></textarea>
+        <div class="char-counter" id="char-counter-ig">
+          <span id="char-count-ig">0</span> / 2,200
+        </div>
       </div>
 
       <div class="form-group">
         <label class="form-label">קפשן פייסבוק</label>
-        <textarea class="form-textarea" id="form-caption-fb" rows="3" placeholder="טקסט הפוסט לפייסבוק (אם שונה מ-IG)..."></textarea>
+        <textarea class="form-textarea" id="form-caption-fb" rows="3" placeholder="טקסט הפוסט לפייסבוק (אם שונה מ-IG)..." oninput="updateCharCounter('fb')"></textarea>
+        <div class="char-counter" id="char-counter-fb">
+          <span id="char-count-fb">0</span> / 63,206
+        </div>
       </div>
 
       <div class="form-group">

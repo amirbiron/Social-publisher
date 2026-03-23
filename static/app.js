@@ -16,6 +16,12 @@ let editPostId = null;
 let driveStack = [];       // [{folderId, name}] for breadcrumb
 let selectedDriveFile = null;
 
+// Filter state
+let filters = { status: '', network: '', dateFrom: '', dateTo: '', search: '' };
+
+// Character limits
+const CHAR_LIMITS = { ig: 2200, fb: 63206 };
+
 // ─── Init ──────────────────────────────────────────────────────
 document.addEventListener('DOMContentLoaded', async () => {
   await loadConfig();
@@ -62,12 +68,72 @@ async function loadPosts() {
   }
 }
 
+function getFilteredPosts() {
+  return posts.filter(post => {
+    const status = (post.status || '').toUpperCase();
+    if (filters.status && status !== filters.status) return false;
+    if (filters.network && (post.network || '') !== filters.network) return false;
+
+    if (filters.dateFrom || filters.dateTo) {
+      const pDate = parseDate(post.publish_at);
+      if (!pDate) return false;
+      if (filters.dateFrom) {
+        const from = new Date(filters.dateFrom + 'T00:00:00');
+        if (pDate < from) return false;
+      }
+      if (filters.dateTo) {
+        const to = new Date(filters.dateTo + 'T23:59:59');
+        if (pDate > to) return false;
+      }
+    }
+
+    if (filters.search) {
+      const q = filters.search.toLowerCase();
+      const inIg = (post.caption_ig || '').toLowerCase().includes(q);
+      const inFb = (post.caption_fb || '').toLowerCase().includes(q);
+      if (!inIg && !inFb) return false;
+    }
+
+    return true;
+  });
+}
+
+function applyFilters() {
+  filters.status = document.getElementById('filter-status').value;
+  filters.network = document.getElementById('filter-network').value;
+  filters.dateFrom = document.getElementById('filter-date-from').value;
+  filters.dateTo = document.getElementById('filter-date-to').value;
+  filters.search = document.getElementById('filter-search').value;
+  renderPosts();
+}
+
+function clearFilters() {
+  document.getElementById('filter-status').value = '';
+  document.getElementById('filter-network').value = '';
+  document.getElementById('filter-date-from').value = '';
+  document.getElementById('filter-date-to').value = '';
+  document.getElementById('filter-search').value = '';
+  filters = { status: '', network: '', dateFrom: '', dateTo: '', search: '' };
+  renderPosts();
+}
+
 function renderPosts() {
   const tbody = document.getElementById('posts-tbody');
+  const filtered = getFilteredPosts();
 
-  if (posts.length === 0) {
-    showElement('posts-empty');
+  if (filtered.length === 0) {
+    if (posts.length === 0) {
+      showElement('posts-empty');
+    } else {
+      hideElement('posts-empty');
+    }
     hideElement('posts-table-wrapper');
+
+    // Show "no results" only when filters are active but no posts match
+    if (posts.length > 0 && filtered.length === 0) {
+      showElement('posts-table-wrapper');
+      tbody.innerHTML = `<tr><td colspan="9" style="text-align:center; padding:var(--space-2xl); color:var(--color-text-muted)">לא נמצאו פוסטים לפי הסינון הנוכחי</td></tr>`;
+    }
     return;
   }
 
@@ -75,7 +141,7 @@ function renderPosts() {
   showElement('posts-table-wrapper');
 
   // Sort: newest first (by ID descending)
-  const sorted = [...posts].sort((a, b) => {
+  const sorted = [...filtered].sort((a, b) => {
     const idA = parseInt(a.id, 10) || 0;
     const idB = parseInt(b.id, 10) || 0;
     return idB - idA;
@@ -89,7 +155,15 @@ function renderPosts() {
     const publishAt = formatDateTime(post.publish_at);
     const captionIg = truncate(post.caption_ig, 40);
     const captionFb = truncate(post.caption_fb, 40);
-    const fileName = post.drive_file_id ? truncate(post.drive_file_id, 20) : '<span style="color:var(--color-text-muted)">-</span>';
+
+    // Thumbnail + file name
+    const fileCell = post.drive_file_id
+      ? `<div class="cell-file-preview">
+           <img class="file-thumbnail" src="/api/drive/thumbnail/${encodeURIComponent(post.drive_file_id)}" alt="" loading="lazy" onerror="this.style.display='none'; this.nextElementSibling.style.display='flex'">
+           <span class="file-thumbnail-fallback" style="display:none">&#128247;</span>
+           <span class="file-name-text" title="${escapeHtml(post.drive_file_id)}">${truncate(post.drive_file_id, 14)}</span>
+         </div>`
+      : '<span style="color:var(--color-text-muted)">-</span>';
 
     const canEdit = status === 'READY' || status === '';
     const canDelete = status !== 'IN_PROGRESS';
@@ -102,9 +176,10 @@ function renderPosts() {
       <td style="direction:ltr; text-align:start">${publishAt}</td>
       <td class="cell-caption ${post.caption_ig ? 'cell-clickable' : ''}" ${post.caption_ig ? `onclick="openCaptionModal('קפשן IG', this.dataset.full)" data-full="${escapeHtml(post.caption_ig)}"` : ''} title="${escapeHtml(post.caption_ig || '')}">${captionIg}</td>
       <td class="cell-caption ${post.caption_fb ? 'cell-clickable' : ''}" ${post.caption_fb ? `onclick="openCaptionModal('קפשן FB', this.dataset.full)" data-full="${escapeHtml(post.caption_fb)}"` : ''} title="${escapeHtml(post.caption_fb || '')}">${captionFb}</td>
-      <td style="direction:ltr; font-size:12px" title="${escapeHtml(post.drive_file_id || '')}">${fileName}</td>
+      <td class="cell-file">${fileCell}</td>
       <td class="cell-actions">
         ${canEdit ? `<button class="btn btn-ghost btn-sm" onclick="openEditModal(${post._row})" title="עריכה">&#9998;</button>` : ''}
+        <button class="btn btn-ghost btn-sm" onclick="duplicatePost(${post._row})" title="שכפול">&#128203;</button>
         ${canDelete ? `<button class="btn btn-ghost btn-sm" onclick="openDeleteConfirm(${post._row}, '${escapeHtml(post.id || '')}')" title="מחיקה" style="color:var(--color-error)">&#128465;</button>` : ''}
         ${post.error ? `<button class="btn btn-ghost btn-sm" onclick="showError(${post._row})" title="פרטי שגיאה" style="color:var(--color-warning)">&#9888;</button>` : ''}
       </td>
@@ -138,6 +213,8 @@ function openCreateModal() {
   document.getElementById('form-drive-file-id-manual').value = '';
   hideElement('drive-file-display');
   hideElement('form-drive-file-id-manual');
+  updateCharCounter('ig');
+  updateCharCounter('fb');
   openModal('post-modal');
 }
 
@@ -178,6 +255,36 @@ function openEditModal(rowNumber) {
   }
 
   hideElement('form-drive-file-id-manual');
+  updateCharCounter('ig');
+  updateCharCounter('fb');
+  openModal('post-modal');
+}
+
+// ─── Duplicate Post ─────────────────────────────────────────
+function duplicatePost(rowNumber) {
+  const post = posts.find(p => p._row === rowNumber);
+  if (!post) return;
+
+  editPostId = null;
+  document.getElementById('post-modal-title').textContent = 'שכפול פוסט';
+  document.getElementById('form-row-number').value = ''; // new post
+  document.getElementById('form-network').value = post.network || 'IG+FB';
+  document.getElementById('form-post-type').value = post.post_type || 'FEED';
+  document.getElementById('form-publish-at').value = '';
+  document.getElementById('form-caption-ig').value = post.caption_ig || '';
+  document.getElementById('form-caption-fb').value = post.caption_fb || '';
+  document.getElementById('form-drive-file-id').value = post.drive_file_id || '';
+
+  if (post.drive_file_id) {
+    document.getElementById('selected-file-name').textContent = post.drive_file_id;
+    showElement('drive-file-display');
+  } else {
+    hideElement('drive-file-display');
+  }
+
+  hideElement('form-drive-file-id-manual');
+  updateCharCounter('ig');
+  updateCharCounter('fb');
   openModal('post-modal');
 }
 
@@ -488,6 +595,27 @@ function toggleManualFileId() {
   }
 }
 
+// ─── Character Counter ──────────────────────────────────────
+function updateCharCounter(type) {
+  const textarea = document.getElementById(`form-caption-${type}`);
+  const counter = document.getElementById(`char-counter-${type}`);
+  const countSpan = document.getElementById(`char-count-${type}`);
+  if (!textarea || !counter || !countSpan) return;
+
+  const len = textarea.value.length;
+  const limit = CHAR_LIMITS[type];
+  countSpan.textContent = len.toLocaleString();
+
+  if (len > limit) {
+    counter.classList.add('over-limit');
+  } else if (len > limit * 0.9) {
+    counter.classList.remove('over-limit');
+    counter.classList.add('near-limit');
+  } else {
+    counter.classList.remove('over-limit', 'near-limit');
+  }
+}
+
 // ═══════════════════════════════════════════════════════════════
 //  Calendar
 // ═══════════════════════════════════════════════════════════════
@@ -553,7 +681,8 @@ function renderCalendar() {
       ? `<div class="calendar-event" style="color:var(--color-text-muted)">+${dayPosts.length - 3} עוד</div>`
       : '';
 
-    html += `<div class="calendar-day${isToday ? ' today' : ''}">
+    const dateStr = `${year}-${String(month + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+    html += `<div class="calendar-day clickable${isToday ? ' today' : ''}" onclick="openCreateModalWithDate('${dateStr}')">
       <div class="calendar-day-number">${day}</div>
       ${eventsHtml}${moreHtml}
     </div>`;
@@ -584,6 +713,24 @@ function calendarNext() {
 function calendarToday() {
   calendarDate = new Date();
   renderCalendar();
+}
+
+function openCreateModalWithDate(dateStr) {
+  editPostId = null;
+  document.getElementById('post-modal-title').textContent = 'פוסט חדש';
+  document.getElementById('form-row-number').value = '';
+  document.getElementById('form-network').value = 'IG+FB';
+  document.getElementById('form-post-type').value = 'FEED';
+  document.getElementById('form-publish-at').value = `${dateStr}T12:00`;
+  document.getElementById('form-caption-ig').value = '';
+  document.getElementById('form-caption-fb').value = '';
+  document.getElementById('form-drive-file-id').value = '';
+  document.getElementById('form-drive-file-id-manual').value = '';
+  hideElement('drive-file-display');
+  hideElement('form-drive-file-id-manual');
+  updateCharCounter('ig');
+  updateCharCounter('fb');
+  openModal('post-modal');
 }
 
 // ═══════════════════════════════════════════════════════════════

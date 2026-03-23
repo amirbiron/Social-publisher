@@ -10,10 +10,11 @@ import hmac
 import logging
 import os
 import sys
+import urllib.request
 from datetime import datetime, timezone
 
 from dateutil import parser as dtparser
-from flask import Flask, jsonify, render_template, request
+from flask import Flask, Response, jsonify, render_template, request
 
 from config_constants import (
     TZ_IL,
@@ -363,6 +364,37 @@ def _is_folder_within_root(folder_id: str, root_id: str, max_depth: int = 10) ->
         except Exception:
             return False
     return False
+
+
+@app.route("/api/drive/thumbnail/<file_id>", methods=["GET"])
+def api_drive_thumbnail(file_id):
+    """מחזיר תמונה ממוזערת של קובץ מ-Drive (proxy)."""
+    try:
+        # Basic validation — Drive file IDs are alphanumeric + hyphens/underscores
+        if not file_id or len(file_id) > 120:
+            return Response(status=400)
+
+        svc = get_drive_service()
+        meta = svc.files().get(fileId=file_id, fields="thumbnailLink").execute()
+        thumb_url = meta.get("thumbnailLink")
+        if not thumb_url:
+            return Response(status=404)
+
+        # Proxy the thumbnail image so the browser can display it
+        req = urllib.request.Request(thumb_url)
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            data = resp.read()
+            content_type = resp.headers.get("Content-Type", "image/png")
+
+        return Response(
+            data,
+            mimetype=content_type,
+            headers={"Cache-Control": "public, max-age=3600"},
+        )
+
+    except Exception:
+        # Return transparent 1x1 PNG on any error (keeps UI clean)
+        return Response(status=404)
 
 
 @app.route("/api/drive/files", methods=["GET"])
