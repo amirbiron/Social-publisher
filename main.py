@@ -10,6 +10,7 @@ import logging
 import os
 import re
 import sys
+import time
 from datetime import datetime, timedelta, timezone
 
 from dateutil import parser as dtparser
@@ -32,9 +33,12 @@ from config import (
     STATUS_ERROR,
     NETWORK_IG,
     NETWORK_FB,
+    NETWORK_BOTH,
     POST_TYPE_FEED,
     POST_TYPE_REELS,
     VIDEO_MIMES,
+    PUBLISH_MAX_RETRIES,
+    PUBLISH_RETRY_DELAY,
 )
 from google_api import (
     sheets_read_all_rows,
@@ -96,6 +100,34 @@ def get_cell(row: list[str], header: list[str], col_name: str, default: str = ""
 #  Process Single Row
 # ═══════════════════════════════════════════════════════════════
 
+def _publish_with_retry(publish_fn, *args, row_id: str, network_name: str) -> str:
+    """
+    מנסה לפרסם עם retry — עד PUBLISH_MAX_RETRIES ניסיונות.
+    מחזיר את ה-result_id אם הצליח, אחרת מעלה את השגיאה האחרונה.
+    """
+    if PUBLISH_MAX_RETRIES < 1:
+        raise ValueError("PUBLISH_MAX_RETRIES must be >= 1")
+
+    last_error = None
+    for attempt in range(1, PUBLISH_MAX_RETRIES + 1):
+        try:
+            return publish_fn(*args)
+        except Exception as e:
+            last_error = e
+            if attempt < PUBLISH_MAX_RETRIES:
+                delay = PUBLISH_RETRY_DELAY * (2 ** (attempt - 1))
+                logger.warning(
+                    f"Row {row_id}: {network_name} publish attempt {attempt}/{PUBLISH_MAX_RETRIES} "
+                    f"failed: {e} — retrying in {delay}s..."
+                )
+                time.sleep(delay)
+            else:
+                logger.error(
+                    f"Row {row_id}: {network_name} publish failed after {PUBLISH_MAX_RETRIES} attempts"
+                )
+    raise last_error
+
+
 def process_row(
     row: list[str],
     header: list[str],
@@ -103,6 +135,7 @@ def process_row(
 ) -> None:
     """
     מעבד שורה אחת: נועל → מוריד → מעלה → מפרסם → מעדכן.
+    תומך ב-network=IG+FB לפרסום לשתי הרשתות מאותה שורה.
     """
     network = get_cell(row, header, COL_NETWORK).strip().upper()
     post_type = get_cell(row, header, COL_POST_TYPE).strip().upper() or POST_TYPE_FEED
@@ -116,7 +149,8 @@ def process_row(
         _mark_error(header, sheet_row_number, "Missing drive_file_id")
         return
 
-    if network not in (NETWORK_IG, NETWORK_FB):
+    valid_networks = (NETWORK_IG, NETWORK_FB, NETWORK_BOTH)
+    if network not in valid_networks:
         _mark_error(header, sheet_row_number, f"Unknown network: {network}")
         return
 
@@ -151,27 +185,76 @@ def process_row(
         cloud_url = upload_to_cloudinary(file_bytes, mime_type, file_name)
 
         # ── שלב 4: פרסום ──
-        if network == NETWORK_IG:
-            caption = caption_ig or caption_fb  # fallback
-            logger.info(f"Row {row_id}: Publishing to Instagram ({post_type})...")
-            result_id = ig_publish_feed(cloud_url, caption, mime_type, post_type)
-        else:
-            caption = caption_fb or caption_ig  # fallback
-            logger.info(f"Row {row_id}: Publishing to Facebook ({post_type})...")
-            result_id = fb_publish_feed(cloud_url, caption, mime_type, post_type)
+        # קובע לאילו רשתות לפרסם
+        targets = []
+        if network in (NETWORK_IG, NETWORK_BOTH):
+            targets.append(NETWORK_IG)
+        if network in (NETWORK_FB, NETWORK_BOTH):
+            targets.append(NETWORK_FB)
 
-        # ── שלב 5: סימון הצלחה ──
-        sheets_update_cells(
-            sheet_row_number,
-            {
-                COL_STATUS: STATUS_POSTED,
-                COL_CLOUDINARY_URL: cloud_url,
-                COL_RESULT: str(result_id),
-                COL_ERROR: "",
-            },
-            header,
-        )
-        logger.info(f"Row {row_id}: POSTED successfully ({result_id})")
+        results = {}
+        errors = {}
+
+        for target in targets:
+            if target == NETWORK_IG:
+                caption = caption_ig or caption_fb
+                logger.info(f"Row {row_id}: Publishing to Instagram ({post_type})...")
+                try:
+                    results[NETWORK_IG] = _publish_with_retry(
+                        ig_publish_feed, cloud_url, caption, mime_type, post_type,
+                        row_id=row_id, network_name="IG",
+                    )
+                except Exception as e:
+                    errors[NETWORK_IG] = e
+            else:
+                caption = caption_fb or caption_ig
+                logger.info(f"Row {row_id}: Publishing to Facebook ({post_type})...")
+                try:
+                    results[NETWORK_FB] = _publish_with_retry(
+                        fb_publish_feed, cloud_url, caption, mime_type, post_type,
+                        row_id=row_id, network_name="FB",
+                    )
+                except Exception as e:
+                    errors[NETWORK_FB] = e
+
+        # ── שלב 5: סימון תוצאה ──
+        if errors and not results:
+            # כל הרשתות נכשלו
+            raise list(errors.values())[0]
+
+        # בניית מחרוזת תוצאה
+        result_parts = [f"{net}:{rid}" for net, rid in results.items()]
+        result_str = " | ".join(result_parts) if network == NETWORK_BOTH else str(list(results.values())[0])
+
+        if errors:
+            # הצלחה חלקית — מסמנים ERROR עם פירוט מה הצליח ומה נכשל
+            error_parts = []
+            for net, err in errors.items():
+                error_parts.append(f"{net}: {err}")
+            error_detail = f"Partial success ({result_str}). Failures: {'; '.join(error_parts)}"
+            logger.warning(f"Row {row_id}: PARTIAL — {error_detail}")
+            sheets_update_cells(
+                sheet_row_number,
+                {
+                    COL_STATUS: STATUS_ERROR,
+                    COL_CLOUDINARY_URL: cloud_url,
+                    COL_RESULT: result_str,
+                    COL_ERROR: error_detail[:500],
+                },
+                header,
+            )
+        else:
+            sheets_update_cells(
+                sheet_row_number,
+                {
+                    COL_STATUS: STATUS_POSTED,
+                    COL_CLOUDINARY_URL: cloud_url,
+                    COL_RESULT: result_str,
+                    COL_ERROR: "",
+                },
+                header,
+            )
+            logger.info(f"Row {row_id}: POSTED successfully ({result_str})")
 
     except Exception as e:
         error_detail = (

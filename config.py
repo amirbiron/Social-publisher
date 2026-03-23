@@ -71,10 +71,15 @@ STATUS_ERROR = "ERROR"
 # ─── Network Values ─────────────────────────────────────────
 NETWORK_IG = "IG"
 NETWORK_FB = "FB"
+NETWORK_BOTH = "IG+FB"
 
 # ─── Post Type Values ──────────────────────────────────────
 POST_TYPE_FEED = "FEED"
 POST_TYPE_REELS = "REELS"
+
+# ─── Retry ────────────────────────────────────────────────
+PUBLISH_MAX_RETRIES = int(os.environ.get("PUBLISH_MAX_RETRIES", "3"))
+PUBLISH_RETRY_DELAY = int(os.environ.get("PUBLISH_RETRY_DELAY", "5"))  # seconds
 
 # ─── Supported MIME types ────────────────────────────────────
 VIDEO_MIMES = {
