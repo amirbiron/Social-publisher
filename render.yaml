@@ -7,7 +7,7 @@ services:
   - type: cron
     name: social-publisher
     runtime: python
-    schedule: "*/1 * * * *"   # כל דקה (UTC) — אפשר לשנות ל-*/5 לחיסכון
+    schedule: "*/5 * * * *"   # כל דקה (UTC) — אפשר לשנות ל-*/5 לחיסכון
     buildCommand: apt-get update && apt-get install -y ffmpeg && pip install -r requirements.txt
     startCommand: python main.py
     region: frankfurt           # הכי קרוב לישראל
