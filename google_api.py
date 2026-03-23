@@ -179,3 +179,98 @@ def drive_download_with_metadata(file_id: str) -> tuple[bytes, dict]:
     metadata = drive_get_file_metadata(file_id)
     file_bytes = drive_download_bytes(file_id)
     return file_bytes, metadata
+
+
+def drive_list_folder(folder_id: str, page_token: Optional[str] = None) -> dict:
+    """
+    מחזיר רשימת קבצים ותיקיות בתוך תיקייה ב-Drive.
+    תומך ב-pagination.
+    """
+    svc = get_drive_service()
+    query = f"'{folder_id}' in parents and trashed = false"
+    fields = "nextPageToken, files(id, name, mimeType, size, thumbnailLink, createdTime)"
+
+    result = (
+        svc.files()
+        .list(
+            q=query,
+            fields=fields,
+            pageSize=50,
+            pageToken=page_token,
+            orderBy="name",
+        )
+        .execute()
+    )
+
+    return {
+        "files": result.get("files", []),
+        "nextPageToken": result.get("nextPageToken"),
+    }
+
+
+def drive_get_thumbnail(file_id: str) -> Optional[str]:
+    """מחזיר URL לתמונה ממוזערת של קובץ."""
+    svc = get_drive_service()
+    result = (
+        svc.files()
+        .get(fileId=file_id, fields="thumbnailLink")
+        .execute()
+    )
+    return result.get("thumbnailLink")
+
+
+def sheets_append_row(values: list[str]):
+    """מוסיף שורה חדשה בסוף הטבלה."""
+    svc = get_sheets_service()
+    rng = f"{SHEET_NAME}!A:Z"
+
+    svc.spreadsheets().values().append(
+        spreadsheetId=SPREADSHEET_ID,
+        range=rng,
+        valueInputOption="RAW",
+        insertDataOption="INSERT_ROWS",
+        body={"values": [values]},
+    ).execute()
+
+    logger.info(f"Appended row with {len(values)} cells")
+
+
+def sheets_delete_row(row_number: int):
+    """
+    מוחק שורה מהטבלה (1-based, כולל header).
+    משתמש ב-batchUpdate עם deleteDimension.
+    """
+    svc = get_sheets_service()
+
+    # קבלת sheet ID (לא spreadsheet ID)
+    spreadsheet = svc.spreadsheets().get(
+        spreadsheetId=SPREADSHEET_ID,
+        fields="sheets.properties"
+    ).execute()
+
+    sheet_id = None
+    for sheet in spreadsheet["sheets"]:
+        if sheet["properties"]["title"] == SHEET_NAME:
+            sheet_id = sheet["properties"]["sheetId"]
+            break
+
+    if sheet_id is None:
+        raise ValueError(f"Sheet '{SHEET_NAME}' not found")
+
+    svc.spreadsheets().batchUpdate(
+        spreadsheetId=SPREADSHEET_ID,
+        body={
+            "requests": [{
+                "deleteDimension": {
+                    "range": {
+                        "sheetId": sheet_id,
+                        "dimension": "ROWS",
+                        "startIndex": row_number - 1,  # 0-based
+                        "endIndex": row_number,
+                    }
+                }
+            }]
+        },
+    ).execute()
+
+    logger.info(f"Deleted row {row_number}")
