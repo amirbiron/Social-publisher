@@ -74,8 +74,8 @@ function renderPosts() {
 
   // Sort: newest publish_at first, then by id descending
   const sorted = [...posts].sort((a, b) => {
-    const dateA = a.publish_at ? new Date(a.publish_at) : new Date(0);
-    const dateB = b.publish_at ? new Date(b.publish_at) : new Date(0);
+    const dateA = parseDate(a.publish_at) || new Date(0);
+    const dateB = parseDate(b.publish_at) || new Date(0);
     return dateB - dateA;
   });
 
@@ -150,14 +150,12 @@ function openEditModal(rowNumber) {
 
   // Convert publish_at to datetime-local format
   if (post.publish_at) {
-    try {
-      const dt = new Date(post.publish_at);
-      if (!isNaN(dt)) {
-        const pad = n => String(n).padStart(2, '0');
-        document.getElementById('form-publish-at').value =
-          `${dt.getFullYear()}-${pad(dt.getMonth() + 1)}-${pad(dt.getDate())}T${pad(dt.getHours())}:${pad(dt.getMinutes())}`;
-      }
-    } catch (e) {
+    const dt = parseDate(post.publish_at);
+    if (dt) {
+      const pad = n => String(n).padStart(2, '0');
+      document.getElementById('form-publish-at').value =
+        `${dt.getFullYear()}-${pad(dt.getMonth() + 1)}-${pad(dt.getDate())}T${pad(dt.getHours())}:${pad(dt.getMinutes())}`;
+    } else {
       document.getElementById('form-publish-at').value = '';
     }
   } else {
@@ -360,30 +358,37 @@ async function loadDriveFolder(folderId) {
     const mediaFiles = files.filter(f => f.mimeType !== 'application/vnd.google-apps.folder');
 
     // Render folders first
-    const folderHtml = folders.map(f => `
-      <div class="drive-file drive-folder" ondblclick="navigateDriveFolder('${f.id}', '${escapeHtml(f.name)}')">
+    folders.forEach(f => {
+      const el = document.createElement('div');
+      el.className = 'drive-file drive-folder';
+      el.dataset.folderId = f.id;
+      el.dataset.folderName = f.name;
+      el.innerHTML = `
         <div class="drive-file-icon">&#128193;</div>
         <div class="drive-file-name" title="${escapeHtml(f.name)}">${escapeHtml(f.name)}</div>
-      </div>
-    `).join('');
+      `;
+      el.addEventListener('dblclick', () => navigateDriveFolder(f.id, f.name));
+      browser.appendChild(el);
+    });
 
     // Render files
-    const fileHtml = mediaFiles.map(f => {
+    mediaFiles.forEach(f => {
+      const el = document.createElement('div');
+      el.className = 'drive-file';
+      el.dataset.fileId = f.id;
+      el.dataset.fileName = f.name;
       const icon = getFileIcon(f.mimeType);
       const thumb = f.thumbnailLink
-        ? `<img src="${f.thumbnailLink}" alt="${escapeHtml(f.name)}" loading="lazy">`
+        ? `<img src="${escapeHtml(f.thumbnailLink)}" alt="${escapeHtml(f.name)}" loading="lazy">`
         : icon;
-
-      return `
-        <div class="drive-file" data-file-id="${f.id}" data-file-name="${escapeHtml(f.name)}"
-             onclick="selectDriveFile(this, '${f.id}', '${escapeHtml(f.name)}')">
-          <div class="drive-file-icon">${thumb}</div>
-          <div class="drive-file-name" title="${escapeHtml(f.name)}">${escapeHtml(f.name)}</div>
-        </div>
+      el.innerHTML = `
+        <div class="drive-file-icon">${thumb}</div>
+        <div class="drive-file-name" title="${escapeHtml(f.name)}">${escapeHtml(f.name)}</div>
       `;
-    }).join('');
+      el.addEventListener('click', () => selectDriveFile(el, f.id, f.name));
+      browser.appendChild(el);
+    });
 
-    browser.innerHTML = folderHtml + fileHtml;
     renderDriveBreadcrumb();
 
   } catch (e) {
@@ -495,17 +500,15 @@ function renderCalendar() {
   const today = new Date();
   for (let day = 1; day <= daysInMonth; day++) {
     const isToday = day === today.getDate() && month === today.getMonth() && year === today.getFullYear();
-    const dateStr = `${year}-${String(month + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
 
     // Find posts for this day
     const dayPosts = posts.filter(p => {
       if (!p.publish_at) return false;
-      try {
-        const pDate = new Date(p.publish_at);
-        return pDate.getFullYear() === year &&
-               pDate.getMonth() === month &&
-               pDate.getDate() === day;
-      } catch (e) { return false; }
+      const pDate = parseDate(p.publish_at);
+      if (!pDate) return false;
+      return pDate.getFullYear() === year &&
+             pDate.getMonth() === month &&
+             pDate.getDate() === day;
     });
 
     const eventsHtml = dayPosts.slice(0, 3).map(p => {
@@ -661,26 +664,33 @@ function postTypeLabel(type) {
   return map[type] || type || '-';
 }
 
+/**
+ * Parse a date string safely across all browsers.
+ * Safari requires ISO 8601 format (T separator), so we normalize
+ * "YYYY-MM-DD HH:MM" to "YYYY-MM-DDTHH:MM" before parsing.
+ */
+function parseDate(str) {
+  if (!str) return null;
+  // Replace first space between date and time with T for ISO 8601 compat
+  const normalized = str.replace(/^(\d{4}-\d{2}-\d{2})\s+(\d{2}:\d{2})/, '$1T$2');
+  const dt = new Date(normalized);
+  return isNaN(dt) ? null : dt;
+}
+
 function formatDateTime(str) {
   if (!str) return '-';
-  try {
-    const dt = new Date(str);
-    if (isNaN(dt)) return str;
-    const pad = n => String(n).padStart(2, '0');
-    return `${pad(dt.getDate())}/${pad(dt.getMonth() + 1)}/${dt.getFullYear()} ${pad(dt.getHours())}:${pad(dt.getMinutes())}`;
-  } catch (e) {
-    return str;
-  }
+  const dt = parseDate(str);
+  if (!dt) return str;
+  const pad = n => String(n).padStart(2, '0');
+  return `${pad(dt.getDate())}/${pad(dt.getMonth() + 1)}/${dt.getFullYear()} ${pad(dt.getHours())}:${pad(dt.getMinutes())}`;
 }
 
 function formatTime(str) {
   if (!str) return '';
-  try {
-    const dt = new Date(str);
-    if (isNaN(dt)) return '';
-    const pad = n => String(n).padStart(2, '0');
-    return `${pad(dt.getHours())}:${pad(dt.getMinutes())}`;
-  } catch (e) { return ''; }
+  const dt = parseDate(str);
+  if (!dt) return '';
+  const pad = n => String(n).padStart(2, '0');
+  return `${pad(dt.getHours())}:${pad(dt.getMinutes())}`;
 }
 
 function truncate(str, max) {
@@ -690,9 +700,12 @@ function truncate(str, max) {
 
 function escapeHtml(str) {
   if (!str) return '';
-  const div = document.createElement('div');
-  div.textContent = str;
-  return div.innerHTML;
+  return str
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
 }
 
 function getFileIcon(mimeType) {

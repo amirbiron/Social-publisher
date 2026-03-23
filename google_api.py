@@ -208,17 +208,6 @@ def drive_list_folder(folder_id: str, page_token: Optional[str] = None) -> dict:
     }
 
 
-def drive_get_thumbnail(file_id: str) -> Optional[str]:
-    """מחזיר URL לתמונה ממוזערת של קובץ."""
-    svc = get_drive_service()
-    result = (
-        svc.files()
-        .get(fileId=file_id, fields="thumbnailLink")
-        .execute()
-    )
-    return result.get("thumbnailLink")
-
-
 def sheets_append_row(values: list[str]):
     """מוסיף שורה חדשה בסוף הטבלה."""
     svc = get_sheets_service()

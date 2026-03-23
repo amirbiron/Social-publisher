@@ -44,6 +44,7 @@ from google_api import (
     col_letter_from_header,
     drive_list_folder,
     drive_get_file_metadata,
+    get_drive_service,
 )
 
 # ─── Logging ─────────────────────────────────────────────────
@@ -195,6 +196,30 @@ def api_delete_post(row_number):
 #  API — Google Drive
 # ═══════════════════════════════════════════════════════════════
 
+def _is_folder_within_root(folder_id: str, root_id: str, max_depth: int = 10) -> bool:
+    """
+    Verify folder_id is the root or a descendant of root_id
+    by walking up the parent chain. Prevents folder traversal attacks.
+    """
+    if folder_id == root_id:
+        return True
+
+    svc = get_drive_service()
+    current = folder_id
+    for _ in range(max_depth):
+        try:
+            meta = svc.files().get(fileId=current, fields="parents").execute()
+            parents = meta.get("parents", [])
+            if not parents:
+                return False
+            if root_id in parents:
+                return True
+            current = parents[0]
+        except Exception:
+            return False
+    return False
+
+
 @app.route("/api/drive/files", methods=["GET"])
 def api_drive_files():
     """מחזיר קבצים מתיקיית Drive."""
@@ -202,6 +227,13 @@ def api_drive_files():
         folder_id = request.args.get("folder_id", DRIVE_FOLDER_ID)
         if not folder_id:
             return jsonify({"error": "No folder ID configured"}), 400
+
+        if not DRIVE_FOLDER_ID:
+            return jsonify({"error": "No root folder configured"}), 400
+
+        # Validate the folder is within the allowed root
+        if not _is_folder_within_root(folder_id, DRIVE_FOLDER_ID):
+            return jsonify({"error": "Access denied: folder outside allowed scope"}), 403
 
         page_token = request.args.get("page_token")
         result = drive_list_folder(folder_id, page_token)
