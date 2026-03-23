@@ -42,6 +42,7 @@ from config import (
 )
 from google_api import (
     sheets_read_all_rows,
+    sheets_read_row,
     sheets_update_cells,
     drive_download_with_metadata,
 )
@@ -134,16 +135,27 @@ def process_row(
     sheet_row_number: int,
 ) -> None:
     """
-    מעבד שורה אחת: נועל → מוריד → מעלה → מפרסם → מעדכן.
+    מעבד שורה אחת: מאמת נעילה → מוריד → מעלה → מפרסם → מעדכן.
     תומך ב-network=IG+FB לפרסום לשתי הרשתות מאותה שורה.
     """
+    row_id = get_cell(row, header, "id", default=str(sheet_row_number))
+
+    # ── שלב 0: אימות נעילה (re-read מהטבלה) ──
+    # בודקים שהסטטוס אכן IN_PROGRESS — אם ריצה מקבילה כבר תפסה את השורה, מדלגים
+    fresh_row = sheets_read_row(sheet_row_number)
+    fresh_status = get_cell(fresh_row, header, COL_STATUS).strip().upper()
+    if fresh_status != STATUS_IN_PROGRESS:
+        logger.warning(
+            f"Row {row_id}: Status changed to {fresh_status!r} after locking — "
+            f"another run may have claimed it. Skipping."
+        )
+        return
+
     network = get_cell(row, header, COL_NETWORK).strip().upper()
     post_type = get_cell(row, header, COL_POST_TYPE).strip().upper() or POST_TYPE_FEED
     drive_file_id = get_cell(row, header, COL_DRIVE_FILE_ID).strip()
     caption_ig = get_cell(row, header, COL_CAPTION_IG)
     caption_fb = get_cell(row, header, COL_CAPTION_FB)
-
-    row_id = get_cell(row, header, "id", default=str(sheet_row_number))
 
     if not drive_file_id:
         _mark_error(header, sheet_row_number, "Missing drive_file_id")
@@ -153,10 +165,6 @@ def process_row(
     if network not in valid_networks:
         _mark_error(header, sheet_row_number, f"Unknown network: {network}")
         return
-
-    # ── שלב 1: נעילה ──
-    logger.info(f"Row {row_id}: Locking (IN_PROGRESS)")
-    sheets_update_cells(sheet_row_number, {COL_STATUS: STATUS_IN_PROGRESS}, header)
 
     try:
         # ── שלב 2: הורדה מ-Drive + זיהוי סוג קובץ ──
@@ -397,6 +405,11 @@ def main():
         if not is_due(publish_at, now_utc):
             skipped += 1
             continue
+
+        # ── נעילה מיידית לפני עיבוד — מצמצם race condition ──
+        row_id = get_cell(row, header, "id", default=str(i))
+        logger.info(f"Row {row_id}: Locking (IN_PROGRESS)")
+        sheets_update_cells(i, {COL_STATUS: STATUS_IN_PROGRESS}, header)
 
         # ── מעבד את השורה ──
         process_row(row, header, i)
