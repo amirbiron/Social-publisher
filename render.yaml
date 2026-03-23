@@ -7,7 +7,7 @@ services:
   - type: cron
     name: social-publisher
     runtime: docker
-    schedule: "*/1 * * * *"   # כל דקה (UTC) — אפשר לשנות ל-*/5 לחיסכון
+    schedule: "*/5 * * * *"   # כל דקה (UTC) — אפשר לשנות ל-*/5 לחיסכון
     dockerfilePath: ./Dockerfile
     region: frankfurt           # הכי קרוב לישראל
     plan: starter               # שנה לפי צורך
