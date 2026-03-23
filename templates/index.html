@@ -131,6 +131,9 @@
           </table>
         </div>
       </div>
+
+      <!-- ─── Mobile Cards View ─── -->
+      <div id="posts-cards" class="posts-cards hidden"></div>
     </div>
 
     <!-- ═══ Calendar View ═══ -->
@@ -298,6 +301,12 @@
     </div>
   </div>
 </div>
+
+<!-- ═══ Mobile FAB: New Post ═══ -->
+<button class="mobile-fab" id="mobile-fab-new" onclick="openCreateModal()" title="פוסט חדש">+</button>
+
+<!-- ═══ Scroll to Top ═══ -->
+<button class="scroll-top-btn" id="scroll-top-btn" onclick="window.scrollTo({top:0,behavior:'smooth'})" title="חזרה למעלה">&#8593;</button>
 
 <script src="/static/app.js"></script>
 </body>
