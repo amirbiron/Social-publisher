@@ -199,23 +199,37 @@ function updateStats() {
   document.getElementById('stat-error').textContent = error;
 }
 
-// ─── Create Post ─────────────────────────────────────────────
-function openCreateModal() {
-  editPostId = null;
-  document.getElementById('post-modal-title').textContent = 'פוסט חדש';
-  document.getElementById('form-row-number').value = '';
-  document.getElementById('form-network').value = 'IG+FB';
-  document.getElementById('form-post-type').value = 'FEED';
-  document.getElementById('form-publish-at').value = '';
-  document.getElementById('form-caption-ig').value = '';
-  document.getElementById('form-caption-fb').value = '';
-  document.getElementById('form-drive-file-id').value = '';
+// ─── Shared Form Setup ───────────────────────────────────────
+function resetPostForm({ title, rowNumber = '', network = 'IG+FB', postType = 'FEED',
+                         publishAt = '', captionIg = '', captionFb = '',
+                         driveFileId = '', postId = null } = {}) {
+  editPostId = postId;
+  document.getElementById('post-modal-title').textContent = title;
+  document.getElementById('form-row-number').value = rowNumber;
+  document.getElementById('form-network').value = network;
+  document.getElementById('form-post-type').value = postType;
+  document.getElementById('form-publish-at').value = publishAt;
+  document.getElementById('form-caption-ig').value = captionIg;
+  document.getElementById('form-caption-fb').value = captionFb;
+  document.getElementById('form-drive-file-id').value = driveFileId;
   document.getElementById('form-drive-file-id-manual').value = '';
-  hideElement('drive-file-display');
+
+  if (driveFileId) {
+    document.getElementById('selected-file-name').textContent = driveFileId;
+    showElement('drive-file-display');
+  } else {
+    hideElement('drive-file-display');
+  }
+
   hideElement('form-drive-file-id-manual');
   updateCharCounter('ig');
   updateCharCounter('fb');
   openModal('post-modal');
+}
+
+// ─── Create Post ─────────────────────────────────────────────
+function openCreateModal() {
+  resetPostForm({ title: 'פוסט חדש' });
 }
 
 // ─── Edit Post ───────────────────────────────────────────────
@@ -223,41 +237,27 @@ function openEditModal(rowNumber) {
   const post = posts.find(p => p._row === rowNumber);
   if (!post) return;
 
-  editPostId = post.id || null;
-  document.getElementById('post-modal-title').textContent = 'עריכת פוסט';
-  document.getElementById('form-row-number').value = rowNumber;
-  document.getElementById('form-network').value = post.network || 'IG+FB';
-  document.getElementById('form-post-type').value = post.post_type || 'FEED';
-
   // Convert publish_at to datetime-local format
+  let publishAt = '';
   if (post.publish_at) {
     const dt = parseDate(post.publish_at);
     if (dt) {
       const pad = n => String(n).padStart(2, '0');
-      document.getElementById('form-publish-at').value =
-        `${dt.getFullYear()}-${pad(dt.getMonth() + 1)}-${pad(dt.getDate())}T${pad(dt.getHours())}:${pad(dt.getMinutes())}`;
-    } else {
-      document.getElementById('form-publish-at').value = '';
+      publishAt = `${dt.getFullYear()}-${pad(dt.getMonth() + 1)}-${pad(dt.getDate())}T${pad(dt.getHours())}:${pad(dt.getMinutes())}`;
     }
-  } else {
-    document.getElementById('form-publish-at').value = '';
   }
 
-  document.getElementById('form-caption-ig').value = post.caption_ig || '';
-  document.getElementById('form-caption-fb').value = post.caption_fb || '';
-  document.getElementById('form-drive-file-id').value = post.drive_file_id || '';
-
-  if (post.drive_file_id) {
-    document.getElementById('selected-file-name').textContent = post.drive_file_id;
-    showElement('drive-file-display');
-  } else {
-    hideElement('drive-file-display');
-  }
-
-  hideElement('form-drive-file-id-manual');
-  updateCharCounter('ig');
-  updateCharCounter('fb');
-  openModal('post-modal');
+  resetPostForm({
+    title: 'עריכת פוסט',
+    rowNumber,
+    network: post.network || 'IG+FB',
+    postType: post.post_type || 'FEED',
+    publishAt,
+    captionIg: post.caption_ig || '',
+    captionFb: post.caption_fb || '',
+    driveFileId: post.drive_file_id || '',
+    postId: post.id || null,
+  });
 }
 
 // ─── Duplicate Post ─────────────────────────────────────────
@@ -265,28 +265,14 @@ function duplicatePost(rowNumber) {
   const post = posts.find(p => p._row === rowNumber);
   if (!post) return;
 
-  editPostId = null;
-  document.getElementById('post-modal-title').textContent = 'שכפול פוסט';
-  document.getElementById('form-row-number').value = ''; // new post
-  document.getElementById('form-network').value = post.network || 'IG+FB';
-  document.getElementById('form-post-type').value = post.post_type || 'FEED';
-  document.getElementById('form-publish-at').value = '';
-  document.getElementById('form-caption-ig').value = post.caption_ig || '';
-  document.getElementById('form-caption-fb').value = post.caption_fb || '';
-  document.getElementById('form-drive-file-id').value = post.drive_file_id || '';
-  document.getElementById('form-drive-file-id-manual').value = '';
-
-  if (post.drive_file_id) {
-    document.getElementById('selected-file-name').textContent = post.drive_file_id;
-    showElement('drive-file-display');
-  } else {
-    hideElement('drive-file-display');
-  }
-
-  hideElement('form-drive-file-id-manual');
-  updateCharCounter('ig');
-  updateCharCounter('fb');
-  openModal('post-modal');
+  resetPostForm({
+    title: 'שכפול פוסט',
+    network: post.network || 'IG+FB',
+    postType: post.post_type || 'FEED',
+    captionIg: post.caption_ig || '',
+    captionFb: post.caption_fb || '',
+    driveFileId: post.drive_file_id || '',
+  });
 }
 
 // ─── Save Post (Create or Update) ───────────────────────────
@@ -718,21 +704,7 @@ function calendarToday() {
 }
 
 function openCreateModalWithDate(dateStr) {
-  editPostId = null;
-  document.getElementById('post-modal-title').textContent = 'פוסט חדש';
-  document.getElementById('form-row-number').value = '';
-  document.getElementById('form-network').value = 'IG+FB';
-  document.getElementById('form-post-type').value = 'FEED';
-  document.getElementById('form-publish-at').value = `${dateStr}T12:00`;
-  document.getElementById('form-caption-ig').value = '';
-  document.getElementById('form-caption-fb').value = '';
-  document.getElementById('form-drive-file-id').value = '';
-  document.getElementById('form-drive-file-id-manual').value = '';
-  hideElement('drive-file-display');
-  hideElement('form-drive-file-id-manual');
-  updateCharCounter('ig');
-  updateCharCounter('fb');
-  openModal('post-modal');
+  resetPostForm({ title: 'פוסט חדש', publishAt: `${dateStr}T12:00` });
 }
 
 // ═══════════════════════════════════════════════════════════════

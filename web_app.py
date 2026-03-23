@@ -449,9 +449,12 @@ def api_drive_thumbnail(file_id):
             return Response(status=404)
 
         # Proxy the thumbnail image so the browser can display it
+        MAX_THUMB_BYTES = 5 * 1024 * 1024  # 5 MB safety cap
         req = urllib.request.Request(thumb_url)
         with urllib.request.urlopen(req, timeout=10) as resp:
-            data = resp.read()
+            data = resp.read(MAX_THUMB_BYTES + 1)
+            if len(data) > MAX_THUMB_BYTES:
+                return Response(status=413)
             content_type = resp.headers.get("Content-Type", "image/png")
 
         return Response(
