@@ -18,6 +18,7 @@ from main import (
     main,
     cleanup_old_cloudinary_assets,
     _CLOUDINARY_URL_RE,
+    _publish_with_retry,
 )
 
 # ─── Header fixture ──────────────────────────────────────────
@@ -360,3 +361,113 @@ class TestCleanup:
         ]
         deleted = cleanup_old_cloudinary_assets(HEADER, rows, NOW_UTC)
         assert deleted == 0
+
+
+# ═══════════════════════════════════════════════════════════════
+#  process_row — IG+FB (dual publish)
+# ═══════════════════════════════════════════════════════════════
+
+class TestProcessRowBothNetworks:
+    @patch("main.sheets_update_cells")
+    @patch("main.upload_to_cloudinary", return_value="https://example.com/img.jpg")
+    @patch("main.normalize_media", side_effect=lambda b, m, n, p: (b, m, n))
+    @patch("main.drive_download_with_metadata", return_value=(b"fake-img", {"mimeType": "image/jpeg", "name": "pic.jpg"}))
+    @patch("main.fb_publish_feed", return_value="fb_post_999")
+    @patch("main.ig_publish_feed", return_value="ig_media_888")
+    def test_both_networks_success(self, mock_ig, mock_fb, mock_drive, mock_norm, mock_cloud, mock_sheets):
+        """IG+FB should publish to both and combine result IDs."""
+        row = _make_row(network="IG+FB", caption_ig="ig cap", caption_fb="fb cap")
+        process_row(row, HEADER, 2)
+
+        mock_ig.assert_called_once_with(
+            "https://example.com/img.jpg", "ig cap", "image/jpeg", "FEED",
+        )
+        mock_fb.assert_called_once_with(
+            "https://example.com/img.jpg", "fb cap", "image/jpeg", "FEED",
+        )
+        posted_call = mock_sheets.call_args_list[-1]
+        assert posted_call[0][1]["status"] == STATUS_POSTED
+        assert "IG:ig_media_888" in posted_call[0][1]["result"]
+        assert "FB:fb_post_999" in posted_call[0][1]["result"]
+
+    @patch("main.sheets_update_cells")
+    @patch("main.upload_to_cloudinary", return_value="https://example.com/img.jpg")
+    @patch("main.normalize_media", side_effect=lambda b, m, n, p: (b, m, n))
+    @patch("main.drive_download_with_metadata", return_value=(b"fake-img", {"mimeType": "image/jpeg", "name": "pic.jpg"}))
+    @patch("main.fb_publish_feed", side_effect=Exception("FB API error"))
+    @patch("main.ig_publish_feed", return_value="ig_media_888")
+    @patch("main.PUBLISH_MAX_RETRIES", 1)
+    def test_both_networks_partial_failure(self, mock_ig, mock_fb, mock_drive, mock_norm, mock_cloud, mock_sheets):
+        """If one network fails, should mark ERROR with partial success info."""
+        row = _make_row(network="IG+FB", caption_ig="ig cap", caption_fb="fb cap")
+        process_row(row, HEADER, 2)
+
+        last_call = mock_sheets.call_args_list[-1]
+        assert last_call[0][1]["status"] == STATUS_ERROR
+        assert "ig_media_888" in last_call[0][1]["result"]
+        assert "Partial success" in last_call[0][1]["error"]
+        assert "FB" in last_call[0][1]["error"]
+
+    @patch("main.sheets_update_cells")
+    @patch("main.upload_to_cloudinary", return_value="https://example.com/img.jpg")
+    @patch("main.normalize_media", side_effect=lambda b, m, n, p: (b, m, n))
+    @patch("main.drive_download_with_metadata", return_value=(b"fake-img", {"mimeType": "image/jpeg", "name": "pic.jpg"}))
+    @patch("main.fb_publish_feed", side_effect=Exception("FB fail"))
+    @patch("main.ig_publish_feed", side_effect=Exception("IG fail"))
+    @patch("main.PUBLISH_MAX_RETRIES", 1)
+    def test_both_networks_all_fail(self, mock_ig, mock_fb, mock_drive, mock_norm, mock_cloud, mock_sheets):
+        """If all networks fail, should mark ERROR."""
+        row = _make_row(network="IG+FB", caption_ig="cap", caption_fb="cap")
+        process_row(row, HEADER, 2)
+
+        last_call = mock_sheets.call_args_list[-1]
+        assert last_call[0][1]["status"] == STATUS_ERROR
+
+    @patch("main.sheets_update_cells")
+    @patch("main.upload_to_cloudinary", return_value="https://example.com/img.jpg")
+    @patch("main.normalize_media", side_effect=lambda b, m, n, p: (b, m, n))
+    @patch("main.drive_download_with_metadata", return_value=(b"fake-img", {"mimeType": "image/jpeg", "name": "pic.jpg"}))
+    @patch("main.fb_publish_feed", return_value="fb_222")
+    @patch("main.ig_publish_feed", return_value="ig_111")
+    def test_both_networks_caption_fallback(self, mock_ig, mock_fb, mock_drive, mock_norm, mock_cloud, mock_sheets):
+        """IG should fallback to caption_fb, FB should fallback to caption_ig."""
+        row = _make_row(network="IG+FB", caption_ig="", caption_fb="fb only")
+        process_row(row, HEADER, 2)
+
+        # IG: caption_ig is empty, should fallback to caption_fb
+        assert mock_ig.call_args[0][1] == "fb only"
+        # FB: caption_fb is "fb only"
+        assert mock_fb.call_args[0][1] == "fb only"
+
+
+# ═══════════════════════════════════════════════════════════════
+#  _publish_with_retry
+# ═══════════════════════════════════════════════════════════════
+
+class TestPublishWithRetry:
+    @patch("main.time.sleep")
+    def test_succeeds_first_try(self, mock_sleep):
+        fn = MagicMock(return_value="result_1")
+        result = _publish_with_retry(fn, "url", "cap", row_id="1", network_name="IG")
+        assert result == "result_1"
+        fn.assert_called_once()
+        mock_sleep.assert_not_called()
+
+    @patch("main.PUBLISH_MAX_RETRIES", 3)
+    @patch("main.PUBLISH_RETRY_DELAY", 1)
+    @patch("main.time.sleep")
+    def test_succeeds_after_retry(self, mock_sleep):
+        fn = MagicMock(side_effect=[Exception("fail1"), Exception("fail2"), "result_ok"])
+        result = _publish_with_retry(fn, "url", "cap", row_id="1", network_name="IG")
+        assert result == "result_ok"
+        assert fn.call_count == 3
+        assert mock_sleep.call_count == 2
+
+    @patch("main.PUBLISH_MAX_RETRIES", 2)
+    @patch("main.PUBLISH_RETRY_DELAY", 1)
+    @patch("main.time.sleep")
+    def test_raises_after_all_retries_exhausted(self, mock_sleep):
+        fn = MagicMock(side_effect=Exception("persistent error"))
+        with pytest.raises(Exception, match="persistent error"):
+            _publish_with_retry(fn, "url", "cap", row_id="1", network_name="IG")
+        assert fn.call_count == 2

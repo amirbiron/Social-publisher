@@ -7,7 +7,7 @@ services:
   - type: cron
     name: social-publisher
     runtime: python
-    schedule: "*/1 * * * *"   # כל דקה (UTC)
+    schedule: "*/5 * * * *"   # כל 5 דקות (UTC)
     buildCommand: apt-get update && apt-get install -y ffmpeg && pip install -r requirements.txt
     startCommand: python main.py
     region: frankfurt           # הכי קרוב לישראל
@@ -37,3 +37,7 @@ services:
         sync: false
       - key: FB_PAGE_ACCESS_TOKEN
         sync: false
+      - key: PUBLISH_MAX_RETRIES
+        value: "3"
+      - key: PUBLISH_RETRY_DELAY
+        value: "5"
