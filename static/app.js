@@ -124,6 +124,22 @@ function clearFilters() {
   renderPosts();
 }
 
+// ─── Collapsible Filter Bar ──────────────────────────────────
+function toggleFilterBar() {
+  const bar = document.getElementById('filter-bar');
+  const collapsed = bar.classList.toggle('collapsed');
+  try { localStorage.setItem('sp-filter-collapsed', collapsed ? '1' : '0'); } catch (e) {}
+}
+
+// Restore filter bar state on load
+(function() {
+  try {
+    if (localStorage.getItem('sp-filter-collapsed') === '1') {
+      document.getElementById('filter-bar').classList.add('collapsed');
+    }
+  } catch (e) {}
+})();
+
 function renderPosts() {
   const tbody = document.getElementById('posts-tbody');
   const cardsEl = document.getElementById('posts-cards');
@@ -817,6 +833,14 @@ function switchView(view) {
 // ─── Sidebar Toggle ──────────────────────────────────────────
 function toggleSidebar() {
   document.getElementById('sidebar').classList.toggle('collapsed');
+}
+
+function toggleFullscreen() {
+  const layout = document.querySelector('.app-layout');
+  const btn = document.getElementById('fullscreen-toggle');
+  const isFullscreen = layout.classList.toggle('fullscreen');
+  btn.innerHTML = isFullscreen ? '&#10005;' : '&#9724;';
+  btn.title = isFullscreen ? 'יציאה ממסך מלא' : 'מסך מלא';
 }
 
 // ═══════════════════════════════════════════════════════════════
