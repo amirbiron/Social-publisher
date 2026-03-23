@@ -108,7 +108,9 @@ def _check_auth():
     ):
         return
 
-    # Not authenticated
+    # Not authenticated — show login page for browser requests, JSON for API
+    if request.path == "/" or not request.path.startswith("/api/"):
+        return _login_page(), 401
     return jsonify({"error": "Unauthorized"}), 401
 
 
@@ -121,15 +123,70 @@ def _set_auth_cookie(response):
         and hmac.compare_digest(request.args["token"], WEB_PANEL_SECRET)
         and not request.cookies.get("panel_token")
     ):
+        # Use secure=True only when the request came over HTTPS.
+        # Behind a reverse proxy (e.g. Render), check X-Forwarded-Proto.
+        is_https = request.is_secure or request.headers.get("X-Forwarded-Proto") == "https"
         response.set_cookie(
             "panel_token",
             _COOKIE_TOKEN,
             httponly=True,
-            secure=True,
+            secure=is_https,
             samesite="Lax",
             max_age=60 * 60 * 24 * 30,  # 30 days
         )
     return response
+
+
+def _login_page() -> str:
+    """Simple Hebrew login page shown when no valid auth is present."""
+    return """<!DOCTYPE html>
+<html lang="he" dir="rtl">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Social Publisher — כניסה</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: 'Segoe UI', Arial, sans-serif; background: #1a1a2e; color: #e0e0e0;
+           display: flex; align-items: center; justify-content: center; min-height: 100vh; }
+    .login-box { background: #252540; border: 1px solid #3a3a5c; border-radius: 12px;
+                 padding: 40px; max-width: 380px; width: 100%; text-align: center; }
+    .login-box h1 { font-size: 22px; margin-bottom: 8px; }
+    .login-box p { font-size: 14px; color: #999; margin-bottom: 24px; }
+    .login-box input { width: 100%; padding: 10px 14px; border-radius: 8px; border: 1px solid #3a3a5c;
+                       background: #1a1a2e; color: #e0e0e0; font-size: 15px; margin-bottom: 16px;
+                       direction: ltr; text-align: center; }
+    .login-box input:focus { outline: none; border-color: #6c63ff; }
+    .login-box button { width: 100%; padding: 10px; border-radius: 8px; border: none;
+                        background: #6c63ff; color: white; font-size: 15px; cursor: pointer; }
+    .login-box button:hover { background: #5a52d5; }
+    .error { color: #ff6b6b; font-size: 13px; margin-bottom: 12px; display: none; }
+  </style>
+</head>
+<body>
+  <div class="login-box">
+    <h1>Social Publisher</h1>
+    <p>הזיני את הסיסמה כדי להיכנס לפאנל</p>
+    <div class="error" id="err">סיסמה שגויה</div>
+    <form onsubmit="go(event)">
+      <input type="password" id="pw" placeholder="סיסמה" autofocus>
+      <button type="submit">כניסה</button>
+    </form>
+  </div>
+  <script>
+    function go(e) {
+      e.preventDefault();
+      const pw = document.getElementById('pw').value;
+      if (!pw) return;
+      window.location.href = '/?token=' + encodeURIComponent(pw);
+    }
+    // If we arrived with a wrong token, show error
+    if (location.search.includes('token=')) {
+      document.getElementById('err').style.display = 'block';
+    }
+  </script>
+</body>
+</html>"""
 
 
 # Drive folder ID (root folder for media files)
