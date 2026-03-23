@@ -9,11 +9,13 @@ import hashlib
 import hmac
 import logging
 import os
+import re
 import sys
+import urllib.request
 from datetime import datetime, timezone
 
 from dateutil import parser as dtparser
-from flask import Flask, jsonify, render_template, request
+from flask import Flask, Response, jsonify, render_template, request
 
 from config_constants import (
     TZ_IL,
@@ -107,7 +109,9 @@ def _check_auth():
     ):
         return
 
-    # Not authenticated
+    # Not authenticated — show login page for browser requests, JSON for API
+    if request.path == "/" or not request.path.startswith("/api/"):
+        return _login_page(), 401
     return jsonify({"error": "Unauthorized"}), 401
 
 
@@ -120,15 +124,70 @@ def _set_auth_cookie(response):
         and hmac.compare_digest(request.args["token"], WEB_PANEL_SECRET)
         and not request.cookies.get("panel_token")
     ):
+        # Use secure=True only when the request came over HTTPS.
+        # Behind a reverse proxy (e.g. Render), check X-Forwarded-Proto.
+        is_https = request.is_secure or request.headers.get("X-Forwarded-Proto") == "https"
         response.set_cookie(
             "panel_token",
             _COOKIE_TOKEN,
             httponly=True,
-            secure=True,
+            secure=is_https,
             samesite="Lax",
             max_age=60 * 60 * 24 * 30,  # 30 days
         )
     return response
+
+
+def _login_page() -> str:
+    """Simple Hebrew login page shown when no valid auth is present."""
+    return """<!DOCTYPE html>
+<html lang="he" dir="rtl">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Social Publisher — כניסה</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: 'Segoe UI', Arial, sans-serif; background: #1a1a2e; color: #e0e0e0;
+           display: flex; align-items: center; justify-content: center; min-height: 100vh; }
+    .login-box { background: #252540; border: 1px solid #3a3a5c; border-radius: 12px;
+                 padding: 40px; max-width: 380px; width: 100%; text-align: center; }
+    .login-box h1 { font-size: 22px; margin-bottom: 8px; }
+    .login-box p { font-size: 14px; color: #999; margin-bottom: 24px; }
+    .login-box input { width: 100%; padding: 10px 14px; border-radius: 8px; border: 1px solid #3a3a5c;
+                       background: #1a1a2e; color: #e0e0e0; font-size: 15px; margin-bottom: 16px;
+                       direction: ltr; text-align: center; }
+    .login-box input:focus { outline: none; border-color: #6c63ff; }
+    .login-box button { width: 100%; padding: 10px; border-radius: 8px; border: none;
+                        background: #6c63ff; color: white; font-size: 15px; cursor: pointer; }
+    .login-box button:hover { background: #5a52d5; }
+    .error { color: #ff6b6b; font-size: 13px; margin-bottom: 12px; display: none; }
+  </style>
+</head>
+<body>
+  <div class="login-box">
+    <h1>Social Publisher</h1>
+    <p>הזיני את הסיסמה כדי להיכנס לפאנל</p>
+    <div class="error" id="err">סיסמה שגויה</div>
+    <form onsubmit="go(event)">
+      <input type="password" id="pw" placeholder="סיסמה" autofocus>
+      <button type="submit">כניסה</button>
+    </form>
+  </div>
+  <script>
+    function go(e) {
+      e.preventDefault();
+      const pw = document.getElementById('pw').value;
+      if (!pw) return;
+      window.location.href = '/?token=' + encodeURIComponent(pw);
+    }
+    // If we arrived with a wrong token, show error
+    if (location.search.includes('token=')) {
+      document.getElementById('err').style.display = 'block';
+    }
+  </script>
+</body>
+</html>"""
 
 
 # Drive folder ID (root folder for media files)
@@ -363,6 +422,53 @@ def _is_folder_within_root(folder_id: str, root_id: str, max_depth: int = 10) ->
         except Exception:
             return False
     return False
+
+
+@app.route("/api/drive/thumbnail/<file_id>", methods=["GET"])
+def api_drive_thumbnail(file_id):
+    """מחזיר תמונה ממוזערת של קובץ מ-Drive (proxy)."""
+    try:
+        if not file_id or len(file_id) > 120 or not re.fullmatch(r'[A-Za-z0-9_-]+', file_id):
+            return Response(status=400)
+
+        if not DRIVE_FOLDER_ID:
+            return Response(status=404)
+
+        # Verify the file belongs to the configured root folder tree
+        svc = get_drive_service()
+        meta = svc.files().get(fileId=file_id, fields="thumbnailLink,parents").execute()
+
+        parents = meta.get("parents", [])
+        if not parents or not any(
+            _is_folder_within_root(p, DRIVE_FOLDER_ID) for p in parents
+        ):
+            return Response(status=403)
+
+        thumb_url = meta.get("thumbnailLink")
+        if not thumb_url:
+            return Response(status=404)
+
+        # Proxy the thumbnail image so the browser can display it
+        MAX_THUMB_BYTES = 5 * 1024 * 1024  # 5 MB safety cap
+        req = urllib.request.Request(thumb_url)
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            data = resp.read(MAX_THUMB_BYTES + 1)
+            if len(data) > MAX_THUMB_BYTES:
+                return Response(status=413)
+            content_type = resp.headers.get("Content-Type", "image/png")
+
+        # Only proxy image MIME types to prevent serving active content (XSS)
+        if not content_type.startswith("image/"):
+            return Response(status=502)
+
+        return Response(
+            data,
+            mimetype=content_type,
+            headers={"Cache-Control": "public, max-age=3600"},
+        )
+
+    except Exception:
+        return Response(status=404)
 
 
 @app.route("/api/drive/files", methods=["GET"])
