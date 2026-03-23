@@ -516,6 +516,15 @@ body {
   white-space: nowrap;
 }
 
+.posts-table .cell-clickable {
+  cursor: pointer;
+  transition: color 0.15s ease;
+}
+
+.posts-table .cell-clickable:hover {
+  color: var(--color-accent);
+}
+
 .posts-table .cell-actions {
   white-space: nowrap;
   display: flex;

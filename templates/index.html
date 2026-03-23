@@ -238,6 +238,25 @@
 <!-- ═══ Toast Container ═══ -->
 <div class="toast-container" id="toast-container"></div>
 
+<!-- ═══ Caption Preview Modal ═══ -->
+<div class="modal-backdrop" id="caption-modal">
+  <div class="modal" style="max-width: 520px">
+    <div class="modal-header">
+      <h2 class="modal-title" id="caption-modal-title">קפשן</h2>
+      <button class="modal-close" onclick="closeCaptionModal()">&times;</button>
+    </div>
+    <div class="modal-body">
+      <pre class="caption-preview-text" id="caption-modal-text" dir="auto" style="white-space:pre-wrap; word-break:break-word; font-family:inherit; margin:0; line-height:1.6"></pre>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-outline btn-md" onclick="copyCaptionText()" id="btn-copy-caption">
+        &#128203; העתקה
+      </button>
+      <button class="btn btn-ghost btn-md" onclick="closeCaptionModal()">סגירה</button>
+    </div>
+  </div>
+</div>
+
 <script src="/static/app.js"></script>
 </body>
 </html>

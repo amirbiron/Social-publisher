@@ -74,11 +74,11 @@ function renderPosts() {
   hideElement('posts-empty');
   showElement('posts-table-wrapper');
 
-  // Sort: newest publish_at first, then by id descending
+  // Sort: newest first (by ID descending)
   const sorted = [...posts].sort((a, b) => {
-    const dateA = parseDate(a.publish_at) || new Date(0);
-    const dateB = parseDate(b.publish_at) || new Date(0);
-    return dateB - dateA;
+    const idA = parseInt(a.id, 10) || 0;
+    const idB = parseInt(b.id, 10) || 0;
+    return idB - idA;
   });
 
   tbody.innerHTML = sorted.map(post => {
@@ -100,8 +100,8 @@ function renderPosts() {
       <td>${network}</td>
       <td>${postType}</td>
       <td style="direction:ltr; text-align:start">${publishAt}</td>
-      <td class="cell-caption" title="${escapeHtml(post.caption_ig || '')}">${captionIg}</td>
-      <td class="cell-caption" title="${escapeHtml(post.caption_fb || '')}">${captionFb}</td>
+      <td class="cell-caption ${post.caption_ig ? 'cell-clickable' : ''}" ${post.caption_ig ? `onclick="openCaptionModal('קפשן IG', this.dataset.full)" data-full="${escapeHtml(post.caption_ig)}"` : ''} title="${escapeHtml(post.caption_ig || '')}">${captionIg}</td>
+      <td class="cell-caption ${post.caption_fb ? 'cell-clickable' : ''}" ${post.caption_fb ? `onclick="openCaptionModal('קפשן FB', this.dataset.full)" data-full="${escapeHtml(post.caption_fb)}"` : ''} title="${escapeHtml(post.caption_fb || '')}">${captionFb}</td>
       <td style="direction:ltr; font-size:12px" title="${escapeHtml(post.drive_file_id || '')}">${fileName}</td>
       <td class="cell-actions">
         ${canEdit ? `<button class="btn btn-ghost btn-sm" onclick="openEditModal(${post._row})" title="עריכה">&#9998;</button>` : ''}
@@ -217,10 +217,6 @@ async function savePost() {
     showToast('יש לבחור קובץ מדיה', 'error');
     return;
   }
-  if (!data.caption_ig && !data.caption_fb) {
-    showToast('יש למלא לפחות קפשן אחד', 'error');
-    return;
-  }
 
   const btn = document.getElementById('btn-save-post');
   btn.disabled = true;
@@ -318,6 +314,27 @@ function showError(rowNumber) {
   const post = posts.find(p => p._row === rowNumber);
   if (!post) return;
   alert(`שגיאה בפוסט #${post.id}:\n\n${post.error || 'אין פרטי שגיאה'}`);
+}
+
+// ─── Caption Preview Modal ───────────────────────────────────
+function openCaptionModal(title, text) {
+  document.getElementById('caption-modal-title').textContent = title;
+  document.getElementById('caption-modal-text').textContent = text;
+  openModal('caption-modal');
+}
+
+function closeCaptionModal() {
+  closeModal('caption-modal');
+}
+
+async function copyCaptionText() {
+  const text = document.getElementById('caption-modal-text').textContent;
+  try {
+    await navigator.clipboard.writeText(text);
+    showToast('הטקסט הועתק', 'success');
+  } catch (e) {
+    showToast('לא ניתן להעתיק', 'error');
+  }
 }
 
 // ═══════════════════════════════════════════════════════════════
