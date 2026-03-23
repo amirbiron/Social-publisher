@@ -154,13 +154,23 @@ function renderPosts() {
     return idB - idA;
   });
 
-  // ── Desktop table ──
-  tbody.innerHTML = sorted.map(post => {
+  // Pre-compute shared values once per post
+  const prepared = sorted.map(post => {
     const status = (post.status || '').toUpperCase();
-    const badge = statusBadge(status);
-    const network = networkLabel(post.network);
-    const postType = postTypeLabel(post.post_type);
-    const publishAt = formatDateTime(post.publish_at);
+    return {
+      post,
+      status,
+      badge: statusBadge(status),
+      network: networkLabel(post.network),
+      postType: postTypeLabel(post.post_type),
+      publishAt: formatDateTime(post.publish_at),
+      canEdit: status === 'READY' || status === '',
+      canDelete: status !== 'IN_PROGRESS',
+    };
+  });
+
+  // ── Desktop table ──
+  tbody.innerHTML = prepared.map(({ post, badge, network, postType, publishAt, canEdit, canDelete }) => {
     const captionIg = truncate(post.caption_ig, 40);
     const captionFb = truncate(post.caption_fb, 40);
 
@@ -172,9 +182,6 @@ function renderPosts() {
            <span class="file-name-text" title="${escapeHtml(post.drive_file_id)}">${truncate(post.drive_file_id, 14)}</span>
          </div>`
       : '<span style="color:var(--color-text-muted)">-</span>';
-
-    const canEdit = status === 'READY' || status === '';
-    const canDelete = status !== 'IN_PROGRESS';
 
     return `<tr>
       <td>${escapeHtml(post.id || '')}</td>
@@ -196,15 +203,7 @@ function renderPosts() {
 
   // ── Mobile cards ──
   if (cardsEl) {
-    cardsEl.innerHTML = sorted.map(post => {
-      const status = (post.status || '').toUpperCase();
-      const badge = statusBadge(status);
-      const network = networkLabel(post.network);
-      const postType = postTypeLabel(post.post_type);
-      const publishAt = formatDateTime(post.publish_at);
-      const canEdit = status === 'READY' || status === '';
-      const canDelete = status !== 'IN_PROGRESS';
-
+    cardsEl.innerHTML = prepared.map(({ post, badge, network, postType, publishAt, canEdit, canDelete }) => {
       const filePart = post.drive_file_id
         ? `<div class="post-card-divider"></div>
            <div class="post-card-row">
