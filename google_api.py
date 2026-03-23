@@ -120,6 +120,25 @@ def sheets_update_cells(row_number: int, updates: dict[str, str], header: list[s
         logger.debug(f"Batch updated row {row_number}: {list(updates.keys())}")
 
 
+def sheets_read_row(row_number: int) -> list[str]:
+    """
+    קורא שורה בודדת מהטבלה (1-based, כולל header).
+    מחזיר רשימת ערכים (או רשימה ריקה אם אין נתונים).
+    """
+    svc = get_sheets_service()
+    rng = f"{SHEET_NAME}!A{row_number}:Z{row_number}"
+
+    resp = (
+        svc.spreadsheets()
+        .values()
+        .get(spreadsheetId=SPREADSHEET_ID, range=rng)
+        .execute()
+    )
+
+    values = resp.get("values", [])
+    return values[0] if values else []
+
+
 def col_letter_from_header(header: list[str], col_name: str) -> str:
     """
     ממיר שם עמודה לאות (A, B, C...).
