@@ -119,6 +119,7 @@ function clearFilters() {
 
 function renderPosts() {
   const tbody = document.getElementById('posts-tbody');
+  const cardsEl = document.getElementById('posts-cards');
   const filtered = getFilteredPosts();
 
   if (filtered.length === 0) {
@@ -128,17 +129,23 @@ function renderPosts() {
       hideElement('posts-empty');
     }
     hideElement('posts-table-wrapper');
+    if (cardsEl) cardsEl.classList.add('hidden');
 
     // Show "no results" only when filters are active but no posts match
     if (posts.length > 0 && filtered.length === 0) {
       showElement('posts-table-wrapper');
       tbody.innerHTML = `<tr><td colspan="9" style="text-align:center; padding:var(--space-2xl); color:var(--color-text-muted)">לא נמצאו פוסטים לפי הסינון הנוכחי</td></tr>`;
+      if (cardsEl) {
+        cardsEl.classList.remove('hidden');
+        cardsEl.innerHTML = `<div class="post-card-empty">לא נמצאו פוסטים לפי הסינון הנוכחי</div>`;
+      }
     }
     return;
   }
 
   hideElement('posts-empty');
   showElement('posts-table-wrapper');
+  if (cardsEl) cardsEl.classList.remove('hidden');
 
   // Sort: newest first (by ID descending)
   const sorted = [...filtered].sort((a, b) => {
@@ -147,6 +154,7 @@ function renderPosts() {
     return idB - idA;
   });
 
+  // ── Desktop table ──
   tbody.innerHTML = sorted.map(post => {
     const status = (post.status || '').toUpperCase();
     const badge = statusBadge(status);
@@ -185,6 +193,78 @@ function renderPosts() {
       </td>
     </tr>`;
   }).join('');
+
+  // ── Mobile cards ──
+  if (cardsEl) {
+    cardsEl.innerHTML = sorted.map(post => {
+      const status = (post.status || '').toUpperCase();
+      const badge = statusBadge(status);
+      const network = networkLabel(post.network);
+      const postType = postTypeLabel(post.post_type);
+      const publishAt = formatDateTime(post.publish_at);
+      const canEdit = status === 'READY' || status === '';
+      const canDelete = status !== 'IN_PROGRESS';
+
+      const filePart = post.drive_file_id
+        ? `<div class="post-card-divider"></div>
+           <div class="post-card-row">
+             <span class="post-card-label">קובץ</span>
+             <div class="post-card-file">
+               <img src="/api/drive/thumbnail/${encodeURIComponent(post.drive_file_id)}" alt="" loading="lazy" onerror="this.style.display='none'">
+               <span>${truncate(post.drive_file_id, 20)}</span>
+             </div>
+           </div>`
+        : '';
+
+      const captionIgPart = post.caption_ig
+        ? `<div class="post-card-divider"></div>
+           <div>
+             <span class="post-card-label">קפשן IG</span>
+             <div class="post-card-caption" onclick="openCaptionModal('קפשן IG', this.dataset.full)" data-full="${escapeHtml(post.caption_ig)}">${escapeHtml(post.caption_ig)}</div>
+           </div>`
+        : '';
+
+      const captionFbPart = post.caption_fb
+        ? `<div class="post-card-divider"></div>
+           <div>
+             <span class="post-card-label">קפשן FB</span>
+             <div class="post-card-caption" onclick="openCaptionModal('קפשן FB', this.dataset.full)" data-full="${escapeHtml(post.caption_fb)}">${escapeHtml(post.caption_fb)}</div>
+           </div>`
+        : '';
+
+      return `<div class="post-card">
+        <div class="post-card-row">
+          <div>${badge}</div>
+          <span class="post-card-value" style="color:var(--color-text-muted); font-size:var(--font-size-xs)">#${escapeHtml(post.id || '')}</span>
+        </div>
+        <div class="post-card-divider"></div>
+        <div class="post-card-row">
+          <span class="post-card-label">רשת</span>
+          <span class="post-card-value">${network}</span>
+        </div>
+        <div class="post-card-divider"></div>
+        <div class="post-card-row">
+          <span class="post-card-label">סוג</span>
+          <span class="post-card-value">${postType}</span>
+        </div>
+        <div class="post-card-divider"></div>
+        <div class="post-card-row">
+          <span class="post-card-label">תאריך פרסום</span>
+          <span class="post-card-value" style="direction:ltr">${publishAt}</span>
+        </div>
+        ${captionIgPart}
+        ${captionFbPart}
+        ${filePart}
+        <div class="post-card-divider"></div>
+        <div class="post-card-actions">
+          ${canEdit ? `<button class="btn btn-ghost btn-sm" onclick="openEditModal(${post._row})" title="עריכה">&#9998; עריכה</button>` : ''}
+          <button class="btn btn-ghost btn-sm" onclick="duplicatePost(${post._row})" title="שכפול">&#128203; שכפול</button>
+          ${canDelete ? `<button class="btn btn-ghost btn-sm" onclick="openDeleteConfirm(${post._row}, '${escapeHtml(post.id || '')}')" title="מחיקה" style="color:var(--color-error)">&#128465; מחיקה</button>` : ''}
+          ${post.error ? `<button class="btn btn-ghost btn-sm" onclick="showError(${post._row})" title="פרטי שגיאה" style="color:var(--color-warning)">&#9888;</button>` : ''}
+        </div>
+      </div>`;
+    }).join('');
+  }
 }
 
 function updateStats() {
@@ -867,3 +947,12 @@ function getFileIcon(mimeType) {
   if (mimeType === 'application/vnd.google-apps.folder') return '&#128193;';
   return '&#128196;';
 }
+
+// ─── Scroll to Top Button ────────────────────────────────────
+(function() {
+  const btn = document.getElementById('scroll-top-btn');
+  if (!btn) return;
+  window.addEventListener('scroll', function() {
+    btn.classList.toggle('visible', window.scrollY > 300);
+  }, { passive: true });
+})();
