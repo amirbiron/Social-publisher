@@ -31,11 +31,13 @@
       <button class="sidebar-toggle desktop-only" onclick="toggleSidebar()" title="כווץ/הרחב">
         &#8592;
       </button>
-      <button class="sidebar-toggle mobile-only" onclick="toggleFullscreen()" id="fullscreen-toggle" title="מסך מלא">
-        &#9724;
-      </button>
     </div>
   </aside>
+
+  <!-- Fullscreen toggle lives outside sidebar so it stays visible when sidebar is hidden -->
+  <button class="fullscreen-toggle-btn mobile-only" onclick="toggleFullscreen()" id="fullscreen-toggle" title="מסך מלא">
+    &#9724;
+  </button>
 
   <!-- ═══ Main Content ═══ -->
   <main class="main-content">

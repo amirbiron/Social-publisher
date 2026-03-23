@@ -249,6 +249,31 @@ body {
   }
 }
 
+/* ─── Fullscreen toggle button (lives outside sidebar) ─────── */
+.fullscreen-toggle-btn {
+  position: fixed;
+  bottom: var(--space-base);
+  inset-inline-end: var(--space-base);
+  z-index: var(--z-sidebar);
+  width: 40px;
+  height: 40px;
+  border-radius: var(--radius-full);
+  border: 1px solid var(--color-border);
+  background: var(--color-bg-sidebar);
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-md);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background var(--transition-fast);
+}
+
+.fullscreen-toggle-btn:hover {
+  background: var(--color-bg-hover);
+  color: var(--color-text-primary);
+}
+
 /* ─── Fullscreen mode (mobile) ─────────────────────────────── */
 .app-layout.fullscreen .sidebar {
   display: none;
@@ -1488,7 +1513,8 @@ body {
   padding: var(--space-sm) var(--space-md);
 }
 
-.post-card-actions .btn[style*="color:var(--color-error)"] {
+.post-card-actions .btn[style*="color:var(--color-error)"],
+.post-card-actions .btn[style*="color: var(--color-error)"] {
   color: var(--color-error-muted) !important;
 }
 
@@ -1502,13 +1528,11 @@ body {
 /* ─── Mobile New Post Button ──────────────────────────────── */
 .mobile-new-post-btn {
   display: none;
-  width: 56px;
-  height: 56px;
-  border-radius: 50%;
-  padding: 0;
-  font-size: 24px;
-  font-weight: 300;
-  margin-inline-end: var(--space-xl);
+  width: 100%;
+  border-radius: var(--radius-md);
+  padding: var(--space-sm) var(--space-base);
+  font-size: var(--font-size-base);
+  font-weight: 500;
   margin-block-end: var(--space-base);
 }
 
