@@ -9,6 +9,7 @@ import hashlib
 import hmac
 import logging
 import os
+import re
 import sys
 import urllib.request
 from datetime import datetime, timezone
@@ -427,8 +428,7 @@ def _is_folder_within_root(folder_id: str, root_id: str, max_depth: int = 10) ->
 def api_drive_thumbnail(file_id):
     """מחזיר תמונה ממוזערת של קובץ מ-Drive (proxy)."""
     try:
-        # Basic validation — Drive file IDs are alphanumeric + hyphens/underscores
-        if not file_id or len(file_id) > 120:
+        if not file_id or len(file_id) > 120 or not re.fullmatch(r'[A-Za-z0-9_-]+', file_id):
             return Response(status=400)
 
         if not DRIVE_FOLDER_ID:
@@ -456,6 +456,10 @@ def api_drive_thumbnail(file_id):
             if len(data) > MAX_THUMB_BYTES:
                 return Response(status=413)
             content_type = resp.headers.get("Content-Type", "image/png")
+
+        # Only proxy image MIME types to prevent serving active content (XSS)
+        if not content_type.startswith("image/"):
+            return Response(status=502)
 
         return Response(
             data,
