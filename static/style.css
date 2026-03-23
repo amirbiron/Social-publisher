@@ -1246,9 +1246,29 @@ body {
     font-size: var(--font-size-xs);
   }
 
-  /* Hide table, show cards on mobile */
+  /* Hide table on mobile, keep spinner & empty state visible */
   .posts-table-wrapper {
     display: none !important;
+  }
+
+  /* Hide the card wrapper when posts are loaded (its children are hidden/table) */
+  .card:has(.posts-table-wrapper) .loading-overlay.hidden ~ .posts-table-wrapper {
+    display: none !important;
+  }
+
+  /* Collapse the parent card so it doesn't show empty box */
+  .card:has(.posts-table-wrapper) {
+    padding: 0;
+    border: none;
+    background: none;
+  }
+
+  /* But restore it when loading or empty state are visible */
+  .card:has(.loading-overlay:not(.hidden)),
+  .card:has(.empty-state:not(.hidden)) {
+    padding: revert;
+    border: revert;
+    background: var(--color-bg-card);
   }
 
   .posts-cards:not(.hidden) {
@@ -1427,7 +1447,7 @@ body {
   font-weight: 300;
   border: none;
   cursor: pointer;
-  z-index: 100;
+  z-index: 30;
   box-shadow: 0 4px 16px oklch(0 0 0 / 0.4);
   transition: transform 0.15s ease, box-shadow 0.15s ease;
   align-items: center;
@@ -1438,21 +1458,27 @@ body {
   transform: scale(0.92);
 }
 
+/* Hide FAB and scroll-top when any modal is open */
+.modal-backdrop.active ~ .mobile-fab,
+.modal-backdrop.active ~ .scroll-top-btn {
+  display: none !important;
+}
+
 /* ─── Scroll to Top ────────────────────────────────────────── */
 .scroll-top-btn {
   display: none;
   position: fixed;
   bottom: var(--space-xl);
-  inset-inline-start: var(--space-xl);
+  inset-inline-end: var(--space-xl);
   width: 40px;
   height: 40px;
   border-radius: 50%;
-  background: var(--color-bg-elevated);
+  background: var(--color-bg-card);
   border: 1px solid var(--color-border);
   color: var(--color-text-secondary);
   font-size: 18px;
   cursor: pointer;
-  z-index: 100;
+  z-index: 30;
   align-items: center;
   justify-content: center;
   box-shadow: 0 2px 8px oklch(0 0 0 / 0.3);
