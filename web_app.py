@@ -431,8 +431,19 @@ def api_drive_thumbnail(file_id):
         if not file_id or len(file_id) > 120:
             return Response(status=400)
 
+        if not DRIVE_FOLDER_ID:
+            return Response(status=404)
+
+        # Verify the file belongs to the configured root folder tree
         svc = get_drive_service()
-        meta = svc.files().get(fileId=file_id, fields="thumbnailLink").execute()
+        meta = svc.files().get(fileId=file_id, fields="thumbnailLink,parents").execute()
+
+        parents = meta.get("parents", [])
+        if not parents or not any(
+            _is_folder_within_root(p, DRIVE_FOLDER_ID) for p in parents
+        ):
+            return Response(status=403)
+
         thumb_url = meta.get("thumbnailLink")
         if not thumb_url:
             return Response(status=404)
@@ -450,7 +461,6 @@ def api_drive_thumbnail(file_id):
         )
 
     except Exception:
-        # Return transparent 1x1 PNG on any error (keeps UI clean)
         return Response(status=404)
 
 

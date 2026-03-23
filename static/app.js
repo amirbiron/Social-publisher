@@ -274,6 +274,7 @@ function duplicatePost(rowNumber) {
   document.getElementById('form-caption-ig').value = post.caption_ig || '';
   document.getElementById('form-caption-fb').value = post.caption_fb || '';
   document.getElementById('form-drive-file-id').value = post.drive_file_id || '';
+  document.getElementById('form-drive-file-id-manual').value = '';
 
   if (post.drive_file_id) {
     document.getElementById('selected-file-name').textContent = post.drive_file_id;
@@ -608,6 +609,7 @@ function updateCharCounter(type) {
 
   if (len > limit) {
     counter.classList.add('over-limit');
+    counter.classList.remove('near-limit');
   } else if (len > limit * 0.9) {
     counter.classList.remove('over-limit');
     counter.classList.add('near-limit');
