@@ -231,6 +231,7 @@ class TestProcessRowErrors:
     @patch("main.normalize_media", side_effect=lambda b, m, n, p: (b, m, n))
     @patch("main.drive_download_with_metadata", return_value=(b"img", {"mimeType": "image/jpeg", "name": "x.jpg"}))
     @patch("main.ig_publish_feed", side_effect=Exception("API rate limit"))
+    @patch("main.PUBLISH_MAX_RETRIES", 1)
     def test_publish_error_marks_error(self, mock_ig, mock_drive, mock_norm, mock_cloud, mock_sheets):
         row = _make_row()
         process_row(row, HEADER, 2)
@@ -244,6 +245,7 @@ class TestProcessRowErrors:
     @patch("main.normalize_media", side_effect=lambda b, m, n, p: (b, m, n))
     @patch("main.drive_download_with_metadata", return_value=(b"img", {"mimeType": "image/jpeg", "name": "x.jpg"}))
     @patch("main.ig_publish_feed", side_effect=Exception("x" * 600))
+    @patch("main.PUBLISH_MAX_RETRIES", 1)
     def test_long_error_message_truncated(self, mock_ig, mock_drive, mock_norm, mock_cloud, mock_sheets):
         row = _make_row()
         process_row(row, HEADER, 2)
@@ -454,14 +456,23 @@ class TestPublishWithRetry:
         mock_sleep.assert_not_called()
 
     @patch("main.PUBLISH_MAX_RETRIES", 3)
-    @patch("main.PUBLISH_RETRY_DELAY", 1)
+    @patch("main.PUBLISH_RETRY_DELAY", 2)
     @patch("main.time.sleep")
-    def test_succeeds_after_retry(self, mock_sleep):
+    def test_succeeds_after_retry_with_exponential_backoff(self, mock_sleep):
         fn = MagicMock(side_effect=[Exception("fail1"), Exception("fail2"), "result_ok"])
         result = _publish_with_retry(fn, "url", "cap", row_id="1", network_name="IG")
         assert result == "result_ok"
         assert fn.call_count == 3
         assert mock_sleep.call_count == 2
+        # exponential backoff: delay * 2^(attempt-1)
+        mock_sleep.assert_any_call(2)   # attempt 1: 2 * 2^0 = 2
+        mock_sleep.assert_any_call(4)   # attempt 2: 2 * 2^1 = 4
+
+    @patch("main.PUBLISH_MAX_RETRIES", 0)
+    def test_raises_value_error_when_max_retries_zero(self):
+        fn = MagicMock()
+        with pytest.raises(ValueError, match="PUBLISH_MAX_RETRIES must be >= 1"):
+            _publish_with_retry(fn, "url", "cap", row_id="1", network_name="IG")
 
     @patch("main.PUBLISH_MAX_RETRIES", 2)
     @patch("main.PUBLISH_RETRY_DELAY", 1)

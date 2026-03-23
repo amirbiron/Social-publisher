@@ -105,6 +105,9 @@ def _publish_with_retry(publish_fn, *args, row_id: str, network_name: str) -> st
     מנסה לפרסם עם retry — עד PUBLISH_MAX_RETRIES ניסיונות.
     מחזיר את ה-result_id אם הצליח, אחרת מעלה את השגיאה האחרונה.
     """
+    if PUBLISH_MAX_RETRIES < 1:
+        raise ValueError("PUBLISH_MAX_RETRIES must be >= 1")
+
     last_error = None
     for attempt in range(1, PUBLISH_MAX_RETRIES + 1):
         try:
@@ -112,11 +115,12 @@ def _publish_with_retry(publish_fn, *args, row_id: str, network_name: str) -> st
         except Exception as e:
             last_error = e
             if attempt < PUBLISH_MAX_RETRIES:
+                delay = PUBLISH_RETRY_DELAY * (2 ** (attempt - 1))
                 logger.warning(
                     f"Row {row_id}: {network_name} publish attempt {attempt}/{PUBLISH_MAX_RETRIES} "
-                    f"failed: {e} — retrying in {PUBLISH_RETRY_DELAY}s..."
+                    f"failed: {e} — retrying in {delay}s..."
                 )
-                time.sleep(PUBLISH_RETRY_DELAY)
+                time.sleep(delay)
             else:
                 logger.error(
                     f"Row {row_id}: {network_name} publish failed after {PUBLISH_MAX_RETRIES} attempts"
