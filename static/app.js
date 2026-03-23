@@ -1065,7 +1065,7 @@ async function pollStatus() {
     const changed = [];
     for (const [id, newStatus] of Object.entries(newMap)) {
       const oldStatus = lastStatusMap[id];
-      if (oldStatus && oldStatus !== newStatus) {
+      if (oldStatus !== undefined && oldStatus !== newStatus) {
         changed.push({ id, from: oldStatus, to: newStatus });
       }
     }
@@ -1079,27 +1079,18 @@ async function pollStatus() {
     }
 
     if (changed.length > 0 || added.length > 0) {
-      // Show toast notifications for status changes
-      for (const { id, to } of changed) {
-        const label = statusLabelHebrew(to);
-        showToast(`פוסט #${id}: ${label}`, statusToastType(to));
-      }
-      if (added.length > 0) {
-        showToast(`${added.length === 1 ? 'פוסט חדש נוסף' : added.length + ' פוסטים חדשים נוספו'}`, 'info');
-      }
-
       // Track which IDs changed so we can highlight after re-render
       const changedIds = new Set([...changed.map(c => c.id), ...added]);
 
-      // Full reload to get updated data
+      // Full reload to get updated data (also refreshes lastStatusMap)
       await loadPosts();
 
       // Highlight changed rows/cards
       highlightChangedPosts(changedIds);
+    } else {
+      // No changes — safe to update snapshot from poll data
+      lastStatusMap = newMap;
     }
-
-    // Update snapshot
-    lastStatusMap = newMap;
 
   } catch (e) {
     // Silent fail — network hiccup, will retry next interval
@@ -1131,24 +1122,4 @@ function highlightChangedPosts(changedIds) {
       }
     }
   });
-}
-
-function statusLabelHebrew(status) {
-  const map = {
-    'READY': 'ממתין',
-    'IN_PROGRESS': 'בתהליך פרסום...',
-    'POSTED': 'פורסם בהצלחה!',
-    'ERROR': 'שגיאה בפרסום',
-  };
-  return map[status] || status;
-}
-
-function statusToastType(status) {
-  const map = {
-    'READY': 'info',
-    'IN_PROGRESS': 'info',
-    'POSTED': 'success',
-    'ERROR': 'error',
-  };
-  return map[status] || 'info';
 }
