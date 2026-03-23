@@ -9,6 +9,8 @@ let config = {};
 let currentView = 'posts';
 let calendarDate = new Date();
 let deleteRowNumber = null;
+let deletePostId = null;
+let editPostId = null;
 
 // Drive browser state
 let driveStack = [];       // [{folderId, name}] for breadcrumb
@@ -103,7 +105,7 @@ function renderPosts() {
       <td style="direction:ltr; font-size:12px" title="${escapeHtml(post.drive_file_id || '')}">${fileName}</td>
       <td class="cell-actions">
         ${canEdit ? `<button class="btn btn-ghost btn-sm" onclick="openEditModal(${post._row})" title="עריכה">&#9998;</button>` : ''}
-        ${canDelete ? `<button class="btn btn-ghost btn-sm" onclick="openDeleteConfirm(${post._row})" title="מחיקה" style="color:var(--color-error)">&#128465;</button>` : ''}
+        ${canDelete ? `<button class="btn btn-ghost btn-sm" onclick="openDeleteConfirm(${post._row}, '${escapeHtml(post.id || '')}')" title="מחיקה" style="color:var(--color-error)">&#128465;</button>` : ''}
         ${post.error ? `<button class="btn btn-ghost btn-sm" onclick="showError(${post._row})" title="פרטי שגיאה" style="color:var(--color-warning)">&#9888;</button>` : ''}
       </td>
     </tr>`;
@@ -124,6 +126,7 @@ function updateStats() {
 
 // ─── Create Post ─────────────────────────────────────────────
 function openCreateModal() {
+  editPostId = null;
   document.getElementById('post-modal-title').textContent = 'פוסט חדש';
   document.getElementById('form-row-number').value = '';
   document.getElementById('form-network').value = 'IG+FB';
@@ -143,6 +146,7 @@ function openEditModal(rowNumber) {
   const post = posts.find(p => p._row === rowNumber);
   if (!post) return;
 
+  editPostId = post.id || null;
   document.getElementById('post-modal-title').textContent = 'עריכת פוסט';
   document.getElementById('form-row-number').value = rowNumber;
   document.getElementById('form-network').value = post.network || 'IG+FB';
@@ -182,12 +186,12 @@ async function savePost() {
   const rowNumber = document.getElementById('form-row-number').value;
   const publishAtInput = document.getElementById('form-publish-at').value;
 
-  // Format publish_at for Israel timezone display
+  // Send the datetime as ISO 8601 with UTC offset so the backend can
+  // convert to Israel time correctly regardless of the browser's timezone.
   let publishAt = '';
   if (publishAtInput) {
     const dt = new Date(publishAtInput);
-    const pad = n => String(n).padStart(2, '0');
-    publishAt = `${dt.getFullYear()}-${pad(dt.getMonth() + 1)}-${pad(dt.getDate())} ${pad(dt.getHours())}:${pad(dt.getMinutes())}`;
+    publishAt = dt.toISOString();
   }
 
   const data = {
@@ -198,6 +202,11 @@ async function savePost() {
     caption_fb: document.getElementById('form-caption-fb').value,
     drive_file_id: document.getElementById('form-drive-file-id').value,
   };
+
+  // Include expected_id for concurrency-safe updates
+  if (rowNumber && editPostId) {
+    data.expected_id = editPostId;
+  }
 
   // Validation
   if (!data.publish_at) {
@@ -260,14 +269,16 @@ function closePostModal() {
 }
 
 // ─── Delete Post ─────────────────────────────────────────────
-function openDeleteConfirm(rowNumber) {
+function openDeleteConfirm(rowNumber, postId) {
   deleteRowNumber = rowNumber;
+  deletePostId = postId;
   openModal('confirm-modal');
 }
 
 function closeConfirmModal() {
   closeModal('confirm-modal');
   deleteRowNumber = null;
+  deletePostId = null;
 }
 
 async function confirmDelete() {
@@ -278,7 +289,10 @@ async function confirmDelete() {
   btn.textContent = 'מוחק...';
 
   try {
-    const resp = await fetch(`/api/posts/${deleteRowNumber}`, { method: 'DELETE' });
+    const deleteUrl = deletePostId
+      ? `/api/posts/${deleteRowNumber}?expected_id=${encodeURIComponent(deletePostId)}`
+      : `/api/posts/${deleteRowNumber}`;
+    const resp = await fetch(deleteUrl, { method: 'DELETE' });
     const result = await resp.json();
 
     if (result.error) {

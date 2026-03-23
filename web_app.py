@@ -5,6 +5,8 @@ Flask app שמתחבר ל-Google Sheets ו-Google Drive,
 ומספק ממשק פשוט ללקוחה לניהול הפוסטים.
 """
 
+import hashlib
+import hmac
 import logging
 import os
 import sys
@@ -69,6 +71,15 @@ if not WEB_PANEL_SECRET:
         "Set this env var before deploying to production."
     )
 
+# Derive a cookie token via HMAC so the raw secret is never stored in the browser.
+_COOKIE_TOKEN = (
+    hmac.new(
+        WEB_PANEL_SECRET.encode(), b"panel_cookie", hashlib.sha256
+    ).hexdigest()
+    if WEB_PANEL_SECRET
+    else ""
+)
+
 
 @app.before_request
 def _check_auth():
@@ -87,8 +98,10 @@ def _check_auth():
         # (handled after response via after_request)
         return
 
-    # Accept: cookie set by a previous token= visit
-    if request.cookies.get("panel_token") == WEB_PANEL_SECRET:
+    # Accept: HMAC cookie set by a previous token= visit
+    if request.cookies.get("panel_token") and hmac.compare_digest(
+        request.cookies["panel_token"], _COOKIE_TOKEN
+    ):
         return
 
     # Not authenticated
@@ -97,7 +110,7 @@ def _check_auth():
 
 @app.after_request
 def _set_auth_cookie(response):
-    """When the user authenticates via ?token=, persist it in a cookie."""
+    """When the user authenticates via ?token=, persist an HMAC-derived cookie."""
     if (
         WEB_PANEL_SECRET
         and request.args.get("token") == WEB_PANEL_SECRET
@@ -105,8 +118,9 @@ def _set_auth_cookie(response):
     ):
         response.set_cookie(
             "panel_token",
-            WEB_PANEL_SECRET,
+            _COOKIE_TOKEN,
             httponly=True,
+            secure=True,
             samesite="Lax",
             max_age=60 * 60 * 24 * 30,  # 30 days
         )
@@ -159,6 +173,26 @@ def api_get_posts():
         return jsonify({"error": str(e)}), 500
 
 
+def _normalize_publish_at(value: str) -> str:
+    """
+    Convert a publish_at value (potentially ISO 8601 with timezone) to
+    Israel-local 'YYYY-MM-DD HH:MM' format for storage in the sheet.
+    The cron publisher expects naive Israel-time strings.
+    """
+    if not value or not value.strip():
+        return value
+    try:
+        dt = dtparser.parse(value)
+        if dt.tzinfo is not None:
+            dt = dt.astimezone(TZ_IL)
+        else:
+            # If no timezone, assume it's already Israel time
+            dt = dt.replace(tzinfo=TZ_IL)
+        return dt.strftime("%Y-%m-%d %H:%M")
+    except (ValueError, TypeError):
+        return value  # pass through unparseable values as-is
+
+
 @app.route("/api/posts", methods=["POST"])
 def api_create_post():
     """יצירת פוסט חדש (שורה חדשה בטבלה)."""
@@ -187,6 +221,8 @@ def api_create_post():
                 row_values.append(next_id)
             elif col_name == COL_STATUS:
                 row_values.append(STATUS_READY)
+            elif col_name == COL_PUBLISH_AT:
+                row_values.append(_normalize_publish_at(data.get(col_name, "")))
             else:
                 row_values.append(data.get(col_name, ""))
 
@@ -200,6 +236,27 @@ def api_create_post():
         return jsonify({"error": str(e)}), 500
 
 
+def _verify_row_id(row_number: int, expected_id: str, header: list, rows: list) -> str | None:
+    """
+    Verify the row still contains the expected post ID.
+    Returns an error message if mismatched, or None if OK.
+    """
+    if not expected_id:
+        return None  # client didn't send an ID — skip check (backward compat)
+    try:
+        id_col = header.index(COL_ID)
+    except ValueError:
+        return None  # no ID column — can't verify
+    row_idx = row_number - 2  # rows are 0-indexed, row_number starts at 2
+    if row_idx < 0 or row_idx >= len(rows):
+        return "Row does not exist"
+    row = rows[row_idx]
+    actual_id = row[id_col] if id_col < len(row) else ""
+    if str(actual_id) != str(expected_id):
+        return f"Row {row_number} no longer contains post #{expected_id} (found #{actual_id}). Please refresh."
+    return None
+
+
 @app.route("/api/posts/<int:row_number>", methods=["PUT"])
 def api_update_post(row_number):
     """עדכון פוסט קיים."""
@@ -208,10 +265,15 @@ def api_update_post(row_number):
 
     try:
         data = request.json
-        header, _ = sheets_read_all_rows()
+        header, rows = sheets_read_all_rows()
 
         if not header:
             return jsonify({"error": "Sheet has no header"}), 400
+
+        # Verify the row still holds the expected post
+        id_err = _verify_row_id(row_number, data.get("expected_id"), header, rows)
+        if id_err:
+            return jsonify({"error": id_err}), 409
 
         # Only allow updating content fields — status is managed by the publisher
         allowed_fields = {
@@ -222,7 +284,10 @@ def api_update_post(row_number):
         updates = {}
         for key, value in data.items():
             if key in allowed_fields:
-                updates[key] = value
+                if key == COL_PUBLISH_AT:
+                    updates[key] = _normalize_publish_at(value)
+                else:
+                    updates[key] = value
 
         if updates:
             sheets_update_cells(row_number, updates, header)
@@ -242,6 +307,15 @@ def api_delete_post(row_number):
         return jsonify({"error": "Invalid row number"}), 400
 
     try:
+        # Verify the row still holds the expected post
+        expected_id = request.args.get("expected_id")
+        if expected_id:
+            header, rows = sheets_read_all_rows()
+            if header:
+                id_err = _verify_row_id(row_number, expected_id, header, rows)
+                if id_err:
+                    return jsonify({"error": id_err}), 409
+
         sheets_delete_row(row_number)
         logger.info(f"Deleted row {row_number}")
         return jsonify({"success": True})
