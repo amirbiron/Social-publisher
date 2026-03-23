@@ -46,6 +46,13 @@ async function loadPosts() {
   hideElement('posts-empty');
   hideElement('posts-table-wrapper');
 
+  // Hide mobile cards while loading to prevent stale data showing
+  const cardsEl = document.getElementById('posts-cards');
+  if (cardsEl) {
+    cardsEl.classList.add('hidden');
+    cardsEl.innerHTML = '';
+  }
+
   try {
     const resp = await fetch('/api/posts');
     const data = await resp.json();

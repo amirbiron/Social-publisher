@@ -1251,11 +1251,6 @@ body {
     display: none !important;
   }
 
-  /* Hide the card wrapper when posts are loaded (its children are hidden/table) */
-  .card:has(.posts-table-wrapper) .loading-overlay.hidden ~ .posts-table-wrapper {
-    display: none !important;
-  }
-
   /* Collapse the parent card so it doesn't show empty box */
   .card:has(.posts-table-wrapper) {
     padding: 0;
@@ -1266,8 +1261,8 @@ body {
   /* But restore it when loading or empty state are visible */
   .card:has(.loading-overlay:not(.hidden)),
   .card:has(.empty-state:not(.hidden)) {
-    padding: revert;
-    border: revert;
+    padding: var(--space-base);
+    border: 1px solid oklch(0.28 0.015 270 / 0.5);
     background: var(--color-bg-card);
   }
 
