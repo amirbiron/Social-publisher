@@ -239,9 +239,6 @@ body {
   color: var(--color-text-primary);
 }
 
-/* Show/hide toggle variants by viewport */
-.sidebar-toggle.mobile-only { display: none; }
-
 /* ─── Fullscreen toggle button (lives outside sidebar) ─────── */
 .fullscreen-toggle-btn {
   position: fixed;
@@ -269,21 +266,18 @@ body {
 
 @media (max-width: 640px) {
   .sidebar-toggle.desktop-only { display: none; }
-  .sidebar-toggle.mobile-only {
-    display: flex;
-  }
   .fullscreen-toggle-btn {
     display: flex;
   }
-}
 
-/* ─── Fullscreen mode (mobile) ─────────────────────────────── */
-.app-layout.fullscreen .sidebar {
-  display: none;
-}
+  /* ─── Fullscreen mode (mobile only) ─── */
+  .app-layout.fullscreen .sidebar {
+    display: none;
+  }
 
-.app-layout.fullscreen .main-content {
-  margin-inline-end: 0;
+  .app-layout.fullscreen .main-content {
+    margin-inline-end: 0;
+  }
 }
 
 /* ─── Main Content ──────────────────────────────────────────── */
