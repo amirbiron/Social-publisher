@@ -95,7 +95,7 @@ function renderPosts() {
     const canDelete = status !== 'IN_PROGRESS';
 
     return `<tr>
-      <td>${post.id || ''}</td>
+      <td>${escapeHtml(post.id || '')}</td>
       <td>${badge}</td>
       <td>${network}</td>
       <td>${postType}</td>

@@ -89,11 +89,14 @@ def _check_auth():
 
     # Accept: Authorization: Bearer <secret>
     auth_header = request.headers.get("Authorization", "")
-    if auth_header == f"Bearer {WEB_PANEL_SECRET}":
+    if auth_header.startswith("Bearer ") and hmac.compare_digest(
+        auth_header[7:], WEB_PANEL_SECRET
+    ):
         return
 
     # Accept: ?token=<secret>  (useful for browser bookmarks)
-    if request.args.get("token") == WEB_PANEL_SECRET:
+    token_param = request.args.get("token", "")
+    if token_param and hmac.compare_digest(token_param, WEB_PANEL_SECRET):
         # Set a session cookie so the user doesn't need the token on every click
         # (handled after response via after_request)
         return
@@ -113,7 +116,8 @@ def _set_auth_cookie(response):
     """When the user authenticates via ?token=, persist an HMAC-derived cookie."""
     if (
         WEB_PANEL_SECRET
-        and request.args.get("token") == WEB_PANEL_SECRET
+        and request.args.get("token", "")
+        and hmac.compare_digest(request.args["token"], WEB_PANEL_SECRET)
         and not request.cookies.get("panel_token")
     ):
         response.set_cookie(
@@ -214,6 +218,12 @@ def api_create_post():
                 pass
         next_id = str(max_id + 1)
 
+        # Only allow user-editable fields — system fields are set by the server
+        allowed_fields = {
+            COL_NETWORK, COL_POST_TYPE, COL_PUBLISH_AT,
+            COL_CAPTION_IG, COL_CAPTION_FB, COL_DRIVE_FILE_ID,
+        }
+
         # Build row values in header order
         row_values = []
         for col_name in header:
@@ -223,8 +233,10 @@ def api_create_post():
                 row_values.append(STATUS_READY)
             elif col_name == COL_PUBLISH_AT:
                 row_values.append(_normalize_publish_at(data.get(col_name, "")))
-            else:
+            elif col_name in allowed_fields:
                 row_values.append(data.get(col_name, ""))
+            else:
+                row_values.append("")
 
         sheets_append_row(row_values)
         logger.info(f"Created post ID {next_id}")
