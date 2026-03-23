@@ -8,7 +8,7 @@ services:
     name: social-publisher
     runtime: python
     schedule: "*/1 * * * *"   # כל דקה (UTC)
-    buildCommand: pip install -r requirements.txt
+    buildCommand: apt-get update && apt-get install -y ffmpeg && pip install -r requirements.txt
     startCommand: python main.py
     region: frankfurt           # הכי קרוב לישראל
     plan: starter               # שנה לפי צורך
