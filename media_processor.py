@@ -277,9 +277,10 @@ def _is_video_compliant(probe: dict) -> bool:
         codec_name = stream.get("codec_name", "")
 
         if codec_type == "video":
-            video_ok = codec_name == "h264"
+            video_ok = video_ok or codec_name == "h264"
         elif codec_type == "audio":
-            audio_ok = codec_name == "aac"
+            if codec_name != "aac":
+                audio_ok = False
 
     return video_ok and audio_ok
 

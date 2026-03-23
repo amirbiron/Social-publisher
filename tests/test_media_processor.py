@@ -52,8 +52,6 @@ def _make_image(
 def _make_jpeg_with_exif_orientation(width=800, height=600, orientation=6):
     """יוצר JPEG עם תג EXIF orientation."""
     img = Image.new("RGB", (width, height), (100, 150, 200))
-    from PIL.ExifTags import Base as ExifBase
-    import piexif
 
     # Use piexif-free approach: save JPEG, then manually set orientation
     buf = io.BytesIO()
@@ -128,6 +126,15 @@ class TestVideoHelpers:
         probe = {"streams": [
             {"codec_type": "video", "codec_name": "h264"},
             {"codec_type": "audio", "codec_name": "mp3"},
+        ]}
+        assert _is_video_compliant(probe) is False
+
+    def test_multiple_audio_streams_non_compliant_if_any_not_aac(self):
+        """mp3 track before aac should still fail compliance."""
+        probe = {"streams": [
+            {"codec_type": "video", "codec_name": "h264"},
+            {"codec_type": "audio", "codec_name": "mp3"},
+            {"codec_type": "audio", "codec_name": "aac"},
         ]}
         assert _is_video_compliant(probe) is False
 
@@ -271,16 +278,14 @@ class TestNormalizeImage:
 class TestImageExifOrientation:
     def test_exif_rotation_applied(self):
         """Image with EXIF orientation 6 (90 CW) should have dimensions swapped."""
-        try:
-            data = _make_jpeg_with_exif_orientation(800, 600, orientation=6)
-        except Exception:
-            pytest.skip("Cannot create EXIF test image in this environment")
-
+        # Use 2000x1600 so after rotation (1600x2000) ratio is 0.8, within 0.8–1.91
+        data = _make_jpeg_with_exif_orientation(2000, 1600, orientation=6)
         result, _, _ = _normalize_image(data, "rotated.jpg")
         img = Image.open(io.BytesIO(result))
-        # After 90 CW rotation, 800x600 becomes 600x800
-        assert img.size[0] == 600
-        assert img.size[1] == 800
+        # After 90 CW rotation, 2000x1600 becomes 1600x2000
+        # Then resized to TARGET_WIDTH=1080 → 1080x1350
+        assert img.size[0] == 1080
+        assert img.size[1] == 1350
 
 
 # ═══════════════════════════════════════════════════════════════
