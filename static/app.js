@@ -24,6 +24,7 @@ const CHAR_LIMITS = { ig: 2200, fb: 63206 };
 
 // Polling state
 let pollTimer = null;
+let pollInFlight = false;
 const POLL_INTERVAL = 15_000; // 15 seconds
 let lastStatusMap = {};       // { postId: status }
 
@@ -1048,6 +1049,9 @@ function stopStatusPolling() {
  * then trigger a full reload + highlight when something changed.
  */
 async function pollStatus() {
+  if (pollInFlight) return; // prevent concurrent polls
+  pollInFlight = true;
+
   try {
     const resp = await fetch('/api/posts/status');
     if (!resp.ok) return;
@@ -1061,27 +1065,18 @@ async function pollStatus() {
       if (s.id) newMap[s.id] = (s.status || '').toUpperCase();
     }
 
-    // Detect changes
-    const changed = [];
+    // Detect changed or newly added post IDs
+    const changedIds = new Set();
     for (const [id, newStatus] of Object.entries(newMap)) {
       const oldStatus = lastStatusMap[id];
-      if (oldStatus !== undefined && oldStatus !== newStatus) {
-        changed.push({ id, from: oldStatus, to: newStatus });
+      if (oldStatus === undefined) {
+        changedIds.add(id); // new post
+      } else if (oldStatus !== newStatus) {
+        changedIds.add(id); // status changed
       }
     }
 
-    // Detect new posts (added externally, e.g. by another user)
-    const added = [];
-    for (const id of Object.keys(newMap)) {
-      if (!(id in lastStatusMap)) {
-        added.push(id);
-      }
-    }
-
-    if (changed.length > 0 || added.length > 0) {
-      // Track which IDs changed so we can highlight after re-render
-      const changedIds = new Set([...changed.map(c => c.id), ...added]);
-
+    if (changedIds.size > 0) {
       // Full reload to get updated data (also refreshes lastStatusMap)
       await loadPosts();
 
@@ -1095,6 +1090,8 @@ async function pollStatus() {
   } catch (e) {
     // Silent fail — network hiccup, will retry next interval
     console.debug('Status poll failed:', e);
+  } finally {
+    pollInFlight = false;
   }
 }
 
@@ -1107,7 +1104,9 @@ function highlightChangedPosts(changedIds) {
     const firstCell = tr.querySelector('td');
     if (firstCell && changedIds.has(firstCell.textContent.trim())) {
       tr.classList.add('status-changed');
-      tr.addEventListener('animationend', () => tr.classList.remove('status-changed'), { once: true });
+      tr.addEventListener('animationend', (e) => {
+        if (e.target === tr) tr.classList.remove('status-changed');
+      }, { once: true });
     }
   });
 
@@ -1118,7 +1117,9 @@ function highlightChangedPosts(changedIds) {
       const idText = idSpan.textContent.replace('#', '').trim();
       if (changedIds.has(idText)) {
         card.classList.add('status-changed');
-        card.addEventListener('animationend', () => card.classList.remove('status-changed'), { once: true });
+        card.addEventListener('animationend', (e) => {
+          if (e.target === card) card.classList.remove('status-changed');
+        }, { once: true });
       }
     }
   });
