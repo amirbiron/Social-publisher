@@ -6,10 +6,9 @@
 services:
   - type: cron
     name: social-publisher
-    runtime: python
+    runtime: docker
     schedule: "*/1 * * * *"   # כל דקה (UTC) — אפשר לשנות ל-*/5 לחיסכון
-    buildCommand: apt-get update && apt-get install -y ffmpeg && pip install -r requirements.txt
-    startCommand: python main.py
+    dockerfilePath: ./Dockerfile
     region: frankfurt           # הכי קרוב לישראל
     plan: starter               # שנה לפי צורך
     envVars:
