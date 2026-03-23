@@ -22,10 +22,17 @@ let filters = { status: '', network: '', dateFrom: '', dateTo: '', search: '' };
 // Character limits
 const CHAR_LIMITS = { ig: 2200, fb: 63206 };
 
+// Polling state
+let pollTimer = null;
+let pollInFlight = false;
+const POLL_INTERVAL = 15_000; // 15 seconds
+let lastStatusMap = {};       // { postId: status }
+
 // ─── Init ──────────────────────────────────────────────────────
 document.addEventListener('DOMContentLoaded', async () => {
   await loadConfig();
   await loadPosts();
+  startStatusPolling();
 });
 
 async function loadConfig() {
@@ -64,6 +71,7 @@ async function loadPosts() {
 
     posts = data.posts || [];
     header = data.header || [];
+    lastStatusMap = buildStatusMap(posts);
     renderPosts();
     updateStats();
     renderCalendar();
@@ -986,3 +994,133 @@ function getFileIcon(mimeType) {
     btn.classList.toggle('visible', window.scrollY > 300);
   }, { passive: true });
 })();
+
+// ═══════════════════════════════════════════════════════════════
+//  Real-time Status Polling
+// ═══════════════════════════════════════════════════════════════
+
+/**
+ * Build a snapshot of { postId → status } from the current posts array.
+ */
+function buildStatusMap(postsArray) {
+  const map = {};
+  for (const p of postsArray) {
+    if (p.id) map[p.id] = (p.status || '').toUpperCase();
+  }
+  return map;
+}
+
+/**
+ * Start polling /api/posts/status every POLL_INTERVAL ms.
+ * Automatically pauses when the tab is hidden (Page Visibility API).
+ */
+function startStatusPolling() {
+  // Capture initial snapshot from already-loaded posts
+  lastStatusMap = buildStatusMap(posts);
+
+  // Visibility-aware polling
+  document.addEventListener('visibilitychange', () => {
+    if (document.hidden) {
+      stopStatusPolling();
+    } else {
+      // When tab becomes visible again, poll immediately then resume interval
+      pollStatus();
+      schedulePoll();
+    }
+  });
+
+  schedulePoll();
+}
+
+function schedulePoll() {
+  stopStatusPolling();
+  pollTimer = setInterval(pollStatus, POLL_INTERVAL);
+}
+
+function stopStatusPolling() {
+  if (pollTimer) {
+    clearInterval(pollTimer);
+    pollTimer = null;
+  }
+}
+
+/**
+ * Lightweight poll: fetch only IDs + statuses, detect changes,
+ * then trigger a full reload + highlight when something changed.
+ */
+async function pollStatus() {
+  if (pollInFlight) return; // prevent concurrent polls
+  pollInFlight = true;
+
+  try {
+    const resp = await fetch('/api/posts/status');
+    if (!resp.ok) return;
+
+    const data = await resp.json();
+    if (data.error || !data.statuses) return;
+
+    // Build new status map from poll response
+    const newMap = {};
+    for (const s of data.statuses) {
+      if (s.id) newMap[s.id] = (s.status || '').toUpperCase();
+    }
+
+    // Detect changed or newly added post IDs
+    const changedIds = new Set();
+    for (const [id, newStatus] of Object.entries(newMap)) {
+      const oldStatus = lastStatusMap[id];
+      if (oldStatus === undefined) {
+        changedIds.add(id); // new post
+      } else if (oldStatus !== newStatus) {
+        changedIds.add(id); // status changed
+      }
+    }
+
+    if (changedIds.size > 0) {
+      // Full reload to get updated data (also refreshes lastStatusMap)
+      await loadPosts();
+
+      // Highlight changed rows/cards
+      highlightChangedPosts(changedIds);
+    } else {
+      // No changes — safe to update snapshot from poll data
+      lastStatusMap = newMap;
+    }
+
+  } catch (e) {
+    // Silent fail — network hiccup, will retry next interval
+    console.debug('Status poll failed:', e);
+  } finally {
+    pollInFlight = false;
+  }
+}
+
+/**
+ * Add a highlight animation to rows/cards whose post ID changed.
+ */
+function highlightChangedPosts(changedIds) {
+  // Desktop table rows — first cell contains the post ID
+  document.querySelectorAll('#posts-tbody tr').forEach(tr => {
+    const firstCell = tr.querySelector('td');
+    if (firstCell && changedIds.has(firstCell.textContent.trim())) {
+      tr.classList.add('status-changed');
+      tr.addEventListener('animationend', (e) => {
+        if (e.target === tr) tr.classList.remove('status-changed');
+      }, { once: true });
+    }
+  });
+
+  // Mobile cards — look for the ID span
+  document.querySelectorAll('.post-card').forEach(card => {
+    const idSpan = card.querySelector('.post-card-value');
+    if (idSpan) {
+      const idText = idSpan.textContent.replace('#', '').trim();
+      if (changedIds.has(idText)) {
+        card.classList.add('status-changed');
+        card.addEventListener('animationend', (e) => {
+          if (e.target === card) card.classList.remove('status-changed');
+        }, { once: true });
+      }
+    }
+  });
+}
