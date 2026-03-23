@@ -242,16 +242,6 @@ body {
 /* Show/hide toggle variants by viewport */
 .sidebar-toggle.mobile-only { display: none; }
 
-@media (max-width: 640px) {
-  .sidebar-toggle.desktop-only { display: none; }
-  .sidebar-toggle.mobile-only {
-    display: flex;
-  }
-  .fullscreen-toggle-btn {
-    display: flex;
-  }
-}
-
 /* ─── Fullscreen toggle button (lives outside sidebar) ─────── */
 .fullscreen-toggle-btn {
   position: fixed;
@@ -275,6 +265,16 @@ body {
 .fullscreen-toggle-btn:hover {
   background: var(--color-bg-hover);
   color: var(--color-text-primary);
+}
+
+@media (max-width: 640px) {
+  .sidebar-toggle.desktop-only { display: none; }
+  .sidebar-toggle.mobile-only {
+    display: flex;
+  }
+  .fullscreen-toggle-btn {
+    display: flex;
+  }
 }
 
 /* ─── Fullscreen mode (mobile) ─────────────────────────────── */
@@ -1272,6 +1272,17 @@ body {
   }
 }
 
+/* ─── Mobile New Post Button ──────────────────────────────── */
+.mobile-new-post-btn {
+  display: none;
+  width: 100%;
+  border-radius: var(--radius-md);
+  padding: var(--space-sm) var(--space-base);
+  font-size: var(--font-size-base);
+  font-weight: 500;
+  margin-block-end: var(--space-base);
+}
+
 /* Mobile */
 @media (max-width: 640px) {
   .sidebar {
@@ -1526,17 +1537,6 @@ body {
   padding: var(--space-2xl) var(--space-base);
   color: var(--color-text-muted);
   font-size: var(--font-size-sm);
-}
-
-/* ─── Mobile New Post Button ──────────────────────────────── */
-.mobile-new-post-btn {
-  display: none;
-  width: 100%;
-  border-radius: var(--radius-md);
-  padding: var(--space-sm) var(--space-base);
-  font-size: var(--font-size-base);
-  font-weight: 500;
-  margin-block-end: var(--space-base);
 }
 
 /* Hide scroll-top when any modal is open */
