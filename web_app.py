@@ -13,7 +13,7 @@ from datetime import datetime, timezone
 from dateutil import parser as dtparser
 from flask import Flask, jsonify, render_template, request
 
-from config import (
+from config_constants import (
     TZ_IL,
     COL_ID,
     COL_STATUS,
@@ -57,6 +57,61 @@ logger = logging.getLogger("web-panel")
 
 # ─── Flask App ───────────────────────────────────────────────
 app = Flask(__name__)
+
+# ─── Authentication ──────────────────────────────────────────
+# Set WEB_PANEL_SECRET to require a bearer token / query param for all requests.
+# Without it the panel is fully open — do NOT deploy without setting this.
+WEB_PANEL_SECRET = os.environ.get("WEB_PANEL_SECRET", "")
+
+if not WEB_PANEL_SECRET:
+    logger.warning(
+        "WEB_PANEL_SECRET is not set — the web panel has NO authentication! "
+        "Set this env var before deploying to production."
+    )
+
+
+@app.before_request
+def _check_auth():
+    """Verify every request carries a valid secret (header, query-param, or cookie)."""
+    if not WEB_PANEL_SECRET:
+        return  # auth disabled (dev mode)
+
+    # Accept: Authorization: Bearer <secret>
+    auth_header = request.headers.get("Authorization", "")
+    if auth_header == f"Bearer {WEB_PANEL_SECRET}":
+        return
+
+    # Accept: ?token=<secret>  (useful for browser bookmarks)
+    if request.args.get("token") == WEB_PANEL_SECRET:
+        # Set a session cookie so the user doesn't need the token on every click
+        # (handled after response via after_request)
+        return
+
+    # Accept: cookie set by a previous token= visit
+    if request.cookies.get("panel_token") == WEB_PANEL_SECRET:
+        return
+
+    # Not authenticated
+    return jsonify({"error": "Unauthorized"}), 401
+
+
+@app.after_request
+def _set_auth_cookie(response):
+    """When the user authenticates via ?token=, persist it in a cookie."""
+    if (
+        WEB_PANEL_SECRET
+        and request.args.get("token") == WEB_PANEL_SECRET
+        and not request.cookies.get("panel_token")
+    ):
+        response.set_cookie(
+            "panel_token",
+            WEB_PANEL_SECRET,
+            httponly=True,
+            samesite="Lax",
+            max_age=60 * 60 * 24 * 30,  # 30 days
+        )
+    return response
+
 
 # Drive folder ID (root folder for media files)
 DRIVE_FOLDER_ID = os.environ.get("GOOGLE_DRIVE_FOLDER_ID", "")
@@ -158,11 +213,10 @@ def api_update_post(row_number):
         if not header:
             return jsonify({"error": "Sheet has no header"}), 400
 
-        # Only allow updating specific fields
+        # Only allow updating content fields — status is managed by the publisher
         allowed_fields = {
             COL_NETWORK, COL_POST_TYPE, COL_PUBLISH_AT,
             COL_CAPTION_IG, COL_CAPTION_FB, COL_DRIVE_FILE_ID,
-            COL_STATUS,
         }
 
         updates = {}
