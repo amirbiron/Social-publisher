@@ -28,11 +28,16 @@
     </nav>
 
     <div class="sidebar-footer">
-      <button class="sidebar-toggle" onclick="toggleSidebar()" title="כווץ/הרחב">
+      <button class="sidebar-toggle desktop-only" onclick="toggleSidebar()" title="כווץ/הרחב">
         &#8592;
       </button>
     </div>
   </aside>
+
+  <!-- Fullscreen toggle lives outside sidebar so it stays visible when sidebar is hidden -->
+  <button class="fullscreen-toggle-btn mobile-only" onclick="toggleFullscreen()" id="fullscreen-toggle" title="מסך מלא">
+    &#9724;
+  </button>
 
   <!-- ═══ Main Content ═══ -->
   <main class="main-content">
@@ -57,6 +62,9 @@
       </div>
     </div>
 
+    <!-- ─── Mobile New Post Button ─── -->
+    <button class="mobile-new-post-btn btn btn-primary btn-md" onclick="openCreateModal()">+ פוסט חדש</button>
+
     <!-- ═══ Posts View ═══ -->
     <div id="view-posts">
       <div class="page-header">
@@ -69,38 +77,46 @@
 
       <!-- ─── Filter Bar ─── -->
       <div class="filter-bar" id="filter-bar">
-        <div class="filter-group">
-          <label class="filter-label">סטטוס</label>
-          <select class="filter-select" id="filter-status" onchange="applyFilters()">
-            <option value="">הכל</option>
-            <option value="READY">ממתין</option>
-            <option value="IN_PROGRESS">בתהליך</option>
-            <option value="POSTED">פורסם</option>
-            <option value="ERROR">שגיאה</option>
-          </select>
+        <button class="filter-toggle" onclick="toggleFilterBar()" id="filter-toggle" title="סינון">
+          <span class="filter-toggle-label">סינון</span>
+          <span class="filter-toggle-arrow" id="filter-toggle-arrow">&#9660;</span>
+        </button>
+        <div class="filter-content" id="filter-content">
+          <div class="filter-fields">
+            <div class="filter-group">
+              <label class="filter-label">סטטוס</label>
+              <select class="filter-select" id="filter-status" onchange="applyFilters()">
+                <option value="">הכל</option>
+                <option value="READY">ממתין</option>
+                <option value="IN_PROGRESS">בתהליך</option>
+                <option value="POSTED">פורסם</option>
+                <option value="ERROR">שגיאה</option>
+              </select>
+            </div>
+            <div class="filter-group">
+              <label class="filter-label">רשת</label>
+              <select class="filter-select" id="filter-network" onchange="applyFilters()">
+                <option value="">הכל</option>
+                <option value="IG">אינסטגרם</option>
+                <option value="FB">פייסבוק</option>
+                <option value="IG+FB">IG+FB</option>
+              </select>
+            </div>
+            <div class="filter-group">
+              <label class="filter-label">מתאריך</label>
+              <input type="date" class="filter-input" id="filter-date-from" onchange="applyFilters()">
+            </div>
+            <div class="filter-group">
+              <label class="filter-label">עד תאריך</label>
+              <input type="date" class="filter-input" id="filter-date-to" onchange="applyFilters()">
+            </div>
+            <div class="filter-group filter-group-search">
+              <label class="filter-label">חיפוש</label>
+              <input type="text" class="filter-input" id="filter-search" placeholder="חיפוש בקפשן..." oninput="applyFilters()">
+            </div>
+            <button class="btn btn-ghost btn-sm filter-clear" onclick="clearFilters()" title="נקה סינון">&#10005; נקה</button>
+          </div>
         </div>
-        <div class="filter-group">
-          <label class="filter-label">רשת</label>
-          <select class="filter-select" id="filter-network" onchange="applyFilters()">
-            <option value="">הכל</option>
-            <option value="IG">אינסטגרם</option>
-            <option value="FB">פייסבוק</option>
-            <option value="IG+FB">IG+FB</option>
-          </select>
-        </div>
-        <div class="filter-group">
-          <label class="filter-label">מתאריך</label>
-          <input type="date" class="filter-input" id="filter-date-from" onchange="applyFilters()">
-        </div>
-        <div class="filter-group">
-          <label class="filter-label">עד תאריך</label>
-          <input type="date" class="filter-input" id="filter-date-to" onchange="applyFilters()">
-        </div>
-        <div class="filter-group filter-group-search">
-          <label class="filter-label">חיפוש</label>
-          <input type="text" class="filter-input" id="filter-search" placeholder="חיפוש בקפשן..." oninput="applyFilters()">
-        </div>
-        <button class="btn btn-ghost btn-sm filter-clear" onclick="clearFilters()" title="נקה סינון">&#10005; נקה</button>
       </div>
 
       <div class="card">
@@ -301,9 +317,6 @@
     </div>
   </div>
 </div>
-
-<!-- ═══ Mobile FAB: New Post ═══ -->
-<button class="mobile-fab" id="mobile-fab-new" onclick="openCreateModal()" title="פוסט חדש">+</button>
 
 <!-- ═══ Scroll to Top ═══ -->
 <button class="scroll-top-btn" id="scroll-top-btn" onclick="window.scrollTo({top:0,behavior:'smooth'})" title="חזרה למעלה">&#8593;</button>

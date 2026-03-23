@@ -31,6 +31,7 @@
   --color-warning-soft: oklch(0.75 0.15 85 / 0.15);
   --color-error: oklch(0.65 0.2 25);
   --color-error-soft: oklch(0.65 0.2 25 / 0.15);
+  --color-error-muted: oklch(0.60 0.12 25);
   --color-info: oklch(0.65 0.15 230);
   --color-info-soft: oklch(0.65 0.15 230 / 0.15);
 
@@ -236,6 +237,47 @@ body {
 .sidebar-toggle:hover {
   background: var(--color-bg-hover);
   color: var(--color-text-primary);
+}
+
+/* ─── Fullscreen toggle button (lives outside sidebar) ─────── */
+.fullscreen-toggle-btn {
+  position: fixed;
+  bottom: var(--space-base);
+  inset-inline-end: var(--space-base);
+  z-index: var(--z-sidebar);
+  width: 40px;
+  height: 40px;
+  border-radius: var(--radius-full);
+  border: 1px solid var(--color-border);
+  background: var(--color-bg-sidebar);
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-md);
+  cursor: pointer;
+  display: none;
+  align-items: center;
+  justify-content: center;
+  transition: background var(--transition-fast);
+}
+
+.fullscreen-toggle-btn:hover {
+  background: var(--color-bg-hover);
+  color: var(--color-text-primary);
+}
+
+@media (max-width: 640px) {
+  .sidebar-toggle.desktop-only { display: none; }
+  .fullscreen-toggle-btn {
+    display: flex;
+  }
+
+  /* ─── Fullscreen mode (mobile only) ─── */
+  .app-layout.fullscreen .sidebar {
+    display: none;
+  }
+
+  .app-layout.fullscreen .main-content {
+    margin-inline-end: 0;
+  }
 }
 
 /* ─── Main Content ──────────────────────────────────────────── */
@@ -465,14 +507,55 @@ body {
 
 /* ─── Filter Bar ────────────────────────────────────────────── */
 .filter-bar {
-  display: flex;
-  align-items: flex-end;
-  gap: var(--space-md);
   margin-block-end: var(--space-base);
-  padding: var(--space-md) var(--space-base);
   background: var(--color-bg-card);
   border: 1px solid oklch(0.28 0.015 270 / 0.5);
   border-radius: var(--radius-lg);
+  overflow: hidden;
+}
+
+.filter-toggle {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  width: 100%;
+  padding: var(--space-sm) var(--space-base);
+  background: none;
+  border: none;
+  cursor: pointer;
+  color: var(--color-text-secondary);
+  font-family: var(--font-family);
+  font-size: var(--font-size-sm);
+  font-weight: 500;
+  transition: color var(--transition-fast);
+}
+
+.filter-toggle:hover {
+  color: var(--color-text-primary);
+}
+
+.filter-toggle-arrow {
+  font-size: 10px;
+  transition: transform var(--transition-fast);
+}
+
+.filter-bar.collapsed .filter-toggle-arrow {
+  transform: rotate(-90deg);
+}
+
+.filter-content {
+  padding: 0 var(--space-base) var(--space-md);
+  transition: all var(--transition-normal);
+}
+
+.filter-bar.collapsed .filter-content {
+  display: none;
+}
+
+.filter-fields {
+  display: flex;
+  align-items: flex-end;
+  gap: var(--space-md);
   flex-wrap: wrap;
 }
 
@@ -1174,13 +1257,24 @@ body {
     grid-template-columns: repeat(2, 1fr);
   }
 
-  .filter-bar {
+  .filter-fields {
     gap: var(--space-sm);
   }
 
   .filter-group {
     min-width: 100px;
   }
+}
+
+/* ─── Mobile New Post Button ──────────────────────────────── */
+.mobile-new-post-btn {
+  display: none;
+  width: 100%;
+  border-radius: var(--radius-md);
+  padding: var(--space-sm) var(--space-base);
+  font-size: var(--font-size-base);
+  font-weight: 500;
+  margin-block-end: var(--space-base);
 }
 
 /* Mobile */
@@ -1270,14 +1364,21 @@ body {
     display: flex;
   }
 
-  /* Hide desktop "new post" button — FAB replaces it */
+  /* Hide desktop "new post" button — mobile button replaces it */
   .page-header .btn-primary {
     display: none;
   }
 
+  /* Show mobile new post button, aligned to end (right in RTL) */
+  .mobile-new-post-btn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+
   /* Filter bar: stack vertically */
-  .filter-bar {
-    flex-wrap: wrap;
+  .filter-fields {
+    flex-direction: column;
   }
 
   .filter-group {
@@ -1331,7 +1432,7 @@ body {
   display: none;
   flex-direction: column;
   gap: var(--space-md);
-  padding-bottom: 80px; /* space for FAB */
+  padding-bottom: var(--space-xl);
 }
 
 .post-card {
@@ -1420,6 +1521,11 @@ body {
   padding: var(--space-sm) var(--space-md);
 }
 
+.post-card-actions .btn[style*="color:var(--color-error)"],
+.post-card-actions .btn[style*="color: var(--color-error)"] {
+  color: var(--color-error-muted) !important;
+}
+
 .post-card-empty {
   text-align: center;
   padding: var(--space-2xl) var(--space-base);
@@ -1427,34 +1533,7 @@ body {
   font-size: var(--font-size-sm);
 }
 
-/* ─── Mobile FAB ───────────────────────────────────────────── */
-.mobile-fab {
-  display: none;
-  position: fixed;
-  bottom: var(--space-xl);
-  inset-inline-end: var(--space-xl);
-  width: 56px;
-  height: 56px;
-  border-radius: 50%;
-  background: var(--color-accent);
-  color: white;
-  font-size: 28px;
-  font-weight: 300;
-  border: none;
-  cursor: pointer;
-  z-index: 30;
-  box-shadow: 0 4px 16px oklch(0 0 0 / 0.4);
-  transition: transform 0.15s ease, box-shadow 0.15s ease;
-  align-items: center;
-  justify-content: center;
-}
-
-.mobile-fab:active {
-  transform: scale(0.92);
-}
-
-/* Hide FAB and scroll-top when any modal is open */
-.modal-backdrop.active ~ .mobile-fab,
+/* Hide scroll-top when any modal is open */
 .modal-backdrop.active ~ .scroll-top-btn {
   display: none !important;
 }
@@ -1488,10 +1567,6 @@ body {
 }
 
 @media (max-width: 640px) {
-  .mobile-fab {
-    display: flex;
-  }
-
   .scroll-top-btn {
     display: flex;
   }
