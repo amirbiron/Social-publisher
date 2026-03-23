@@ -43,7 +43,6 @@ from google_api import (
     sheets_delete_row,
     col_letter_from_header,
     drive_list_folder,
-    drive_get_file_metadata,
     get_drive_service,
 )
 
@@ -149,6 +148,9 @@ def api_create_post():
 @app.route("/api/posts/<int:row_number>", methods=["PUT"])
 def api_update_post(row_number):
     """עדכון פוסט קיים."""
+    if row_number < 2:
+        return jsonify({"error": "Invalid row number"}), 400
+
     try:
         data = request.json
         header, _ = sheets_read_all_rows()
@@ -182,6 +184,9 @@ def api_update_post(row_number):
 @app.route("/api/posts/<int:row_number>", methods=["DELETE"])
 def api_delete_post(row_number):
     """מחיקת פוסט (שורה מהטבלה)."""
+    if row_number < 2:
+        return jsonify({"error": "Invalid row number"}), 400
+
     try:
         sheets_delete_row(row_number)
         logger.info(f"Deleted row {row_number}")
@@ -244,17 +249,6 @@ def api_drive_files():
         logger.error(f"Error listing Drive files: {e}", exc_info=True)
         return jsonify({"error": str(e)}), 500
 
-
-@app.route("/api/drive/file/<file_id>", methods=["GET"])
-def api_drive_file_meta(file_id):
-    """מחזיר metadata של קובץ מ-Drive."""
-    try:
-        metadata = drive_get_file_metadata(file_id)
-        return jsonify(metadata)
-
-    except Exception as e:
-        logger.error(f"Error fetching file metadata: {e}", exc_info=True)
-        return jsonify({"error": str(e)}), 500
 
 
 # ═══════════════════════════════════════════════════════════════

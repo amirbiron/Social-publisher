@@ -512,8 +512,8 @@ function renderCalendar() {
     });
 
     const eventsHtml = dayPosts.slice(0, 3).map(p => {
-      const status = (p.status || '').toLowerCase().replace('_', '-');
-      const net = p.network || '';
+      const status = (p.status || '').toLowerCase().replace('_', '-').replace(/[^a-z0-9-]/g, '');
+      const net = escapeHtml(p.network || '');
       const time = p.publish_at ? formatTime(p.publish_at) : '';
       return `<div class="calendar-event status-${status}" title="${escapeHtml(p.caption_ig || p.caption_fb || '')}">${time} ${net}</div>`;
     }).join('');
@@ -643,8 +643,8 @@ function statusBadge(status) {
     'POSTED': { class: 'badge-posted', label: 'פורסם' },
     'ERROR': { class: 'badge-error', label: 'שגיאה' },
   };
-  const info = map[status] || { class: '', label: status || '-' };
-  return `<span class="badge ${info.class}"><span class="badge-dot"></span>${info.label}</span>`;
+  const info = map[status] || { class: '', label: escapeHtml(status) || '-' };
+  return `<span class="badge ${escapeHtml(info.class)}"><span class="badge-dot"></span>${info.label}</span>`;
 }
 
 function networkLabel(network) {
@@ -653,7 +653,7 @@ function networkLabel(network) {
     'FB': 'FB',
     'IG+FB': 'IG+FB',
   };
-  return map[network] || network || '-';
+  return map[network] || escapeHtml(network) || '-';
 }
 
 function postTypeLabel(type) {
@@ -661,7 +661,7 @@ function postTypeLabel(type) {
     'FEED': 'פיד',
     'REELS': 'ריל',
   };
-  return map[type] || type || '-';
+  return map[type] || escapeHtml(type) || '-';
 }
 
 /**
