@@ -258,6 +258,24 @@ class TestNormalizeImage:
         _, _, name = _normalize_image(data, "my.photo.png")
         assert name == "my.photo.jpg"
 
+    def test_reels_post_type_allows_9_16_ratio(self):
+        """9:16 ratio (0.5625) should pass for REELS but fail for FEED."""
+        data = _make_image(900, 1600, fmt="JPEG")
+        # Should fail for feed
+        with pytest.raises(MediaProcessingError) as exc_info:
+            _normalize_image(data, "tall.jpg")
+        assert exc_info.value.error_code == "INVALID_FEED_RATIO"
+        # Should pass for reels
+        result, mime, _ = _normalize_image(data, "tall.jpg", post_type="REELS")
+        assert mime == "image/jpeg"
+
+    def test_reels_post_type_rejects_too_tall(self):
+        """Ratio below 9:16 should fail even for REELS."""
+        data = _make_image(400, 1000, fmt="JPEG")  # ratio 0.4
+        with pytest.raises(MediaProcessingError) as exc_info:
+            _normalize_image(data, "tall.jpg", post_type="REELS")
+        assert exc_info.value.error_code == "INVALID_REELS_RATIO"
+
     def test_corrupted_file_raises(self):
         with pytest.raises(MediaProcessingError) as exc_info:
             _normalize_image(b"not an image at all", "bad.jpg")
@@ -286,6 +304,24 @@ class TestImageExifOrientation:
         # Then resized to TARGET_WIDTH=1080 → 1080x1350
         assert img.size[0] == 1080
         assert img.size[1] == 1350
+
+    def test_malformed_exif_raises_media_error(self):
+        """Malformed EXIF data should raise MediaProcessingError, not a raw exception."""
+        # Create a JPEG with corrupted EXIF segment
+        img = Image.new("RGB", (1080, 1080), (100, 150, 200))
+        buf = io.BytesIO()
+        img.save(buf, format="JPEG")
+        raw = buf.getvalue()
+        # Inject garbage EXIF marker (APP1 with invalid data)
+        # JPEG starts with FF D8; insert a corrupt APP1 segment after it
+        corrupt_exif = b"\xff\xe1\x00\x10Exif\x00\x00\xff\xff\xff\xff\xff\xff\xff\xff"
+        corrupted = raw[:2] + corrupt_exif + raw[2:]
+        # Should either succeed (Pillow ignores bad EXIF) or raise MediaProcessingError
+        try:
+            result, mime, _ = _normalize_image(corrupted, "bad_exif.jpg")
+            assert mime == "image/jpeg"
+        except MediaProcessingError:
+            pass  # This is the acceptable error path
 
 
 # ═══════════════════════════════════════════════════════════════

@@ -14,7 +14,7 @@ import tempfile
 
 from PIL import Image, ImageOps, UnidentifiedImageError
 
-from config import IMAGE_MIMES, VIDEO_MIMES
+from config import IMAGE_MIMES, POST_TYPE_REELS, VIDEO_MIMES
 
 logger = logging.getLogger(__name__)
 
@@ -22,8 +22,10 @@ logger = logging.getLogger(__name__)
 MAX_IMAGE_SIZE = 8_388_608  # 8 MB
 TARGET_WIDTH = 1080
 MIN_WIDTH = 320
-MIN_RATIO = 0.8   # 4:5
+MIN_RATIO = 0.8   # 4:5  (feed)
 MAX_RATIO = 1.91  # 1.91:1
+REELS_MIN_RATIO = 0.5625  # 9:16
+REELS_MAX_RATIO = 1.91    # 1.91:1
 JPEG_QUALITY_STEPS = [85, 80, 75, 70, 68]
 FFMPEG_TIMEOUT = 300  # seconds
 
@@ -55,7 +57,7 @@ def normalize_media(
         )
 
     if mime_type in IMAGE_MIMES:
-        return _normalize_image(file_bytes, file_name)
+        return _normalize_image(file_bytes, file_name, post_type)
 
     if mime_type in VIDEO_MIMES:
         return _normalize_video(file_bytes, mime_type, file_name)
@@ -67,20 +69,18 @@ def normalize_media(
 
 # ─── Image Processing ────────────────────────────────────────
 def _normalize_image(
-    file_bytes: bytes, file_name: str
+    file_bytes: bytes, file_name: str, post_type: str = ""
 ) -> tuple[bytes, str, str]:
     """המרת תמונה ל-JPEG תקין לפי דרישות Instagram API."""
-    # 1. Open
+    # 1. Open & fix EXIF orientation
     try:
         img = Image.open(io.BytesIO(file_bytes))
         img.load()
+        img = ImageOps.exif_transpose(img)
     except (UnidentifiedImageError, Exception) as exc:
         raise MediaProcessingError(
             f"Cannot open image: {exc}", "UNSUPPORTED_MEDIA_TYPE"
         ) from exc
-
-    # 2. Fix EXIF orientation
-    img = ImageOps.exif_transpose(img)
 
     # 3. Flatten transparency
     if img.mode in ("RGBA", "LA") or (
@@ -99,12 +99,18 @@ def _normalize_image(
     # 5. Validate aspect ratio
     width, height = img.size
     ratio = width / height
-    if ratio < MIN_RATIO or ratio > MAX_RATIO:
+    if post_type == POST_TYPE_REELS:
+        min_r, max_r = REELS_MIN_RATIO, REELS_MAX_RATIO
+        error_code = "INVALID_REELS_RATIO"
+    else:
+        min_r, max_r = MIN_RATIO, MAX_RATIO
+        error_code = "INVALID_FEED_RATIO"
+    if ratio < min_r or ratio > max_r:
         raise MediaProcessingError(
             f"Invalid aspect ratio {ratio:.2f} "
-            f"(must be between {MIN_RATIO} and {MAX_RATIO}, i.e. 4:5 to 1.91:1). "
+            f"(must be between {min_r} and {max_r}). "
             f"Image dimensions: {width}x{height}",
-            "INVALID_FEED_RATIO",
+            error_code,
         )
 
     # 6. Resize
