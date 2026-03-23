@@ -1,0 +1,417 @@
+"""
+web_app.py — פאנל ווב לניהול פוסטים ברשתות חברתיות
+
+Flask app שמתחבר ל-Google Sheets ו-Google Drive,
+ומספק ממשק פשוט ללקוחה לניהול הפוסטים.
+"""
+
+import hashlib
+import hmac
+import logging
+import os
+import sys
+from datetime import datetime, timezone
+
+from dateutil import parser as dtparser
+from flask import Flask, jsonify, render_template, request
+
+from config_constants import (
+    TZ_IL,
+    COL_ID,
+    COL_STATUS,
+    COL_NETWORK,
+    COL_POST_TYPE,
+    COL_PUBLISH_AT,
+    COL_CAPTION_IG,
+    COL_CAPTION_FB,
+    COL_DRIVE_FILE_ID,
+    COL_CLOUDINARY_URL,
+    COL_RESULT,
+    COL_ERROR,
+    STATUS_READY,
+    STATUS_POSTED,
+    STATUS_ERROR,
+    STATUS_IN_PROGRESS,
+    NETWORK_IG,
+    NETWORK_FB,
+    NETWORK_BOTH,
+    POST_TYPE_FEED,
+    POST_TYPE_REELS,
+)
+from google_api import (
+    sheets_read_all_rows,
+    sheets_update_cells,
+    sheets_append_row,
+    sheets_delete_row,
+    col_letter_from_header,
+    drive_list_folder,
+    get_drive_service,
+)
+
+# ─── Logging ─────────────────────────────────────────────────
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+    datefmt="%Y-%m-%d %H:%M:%S",
+    stream=sys.stdout,
+)
+logger = logging.getLogger("web-panel")
+
+# ─── Flask App ───────────────────────────────────────────────
+app = Flask(__name__)
+
+# ─── Authentication ──────────────────────────────────────────
+# Set WEB_PANEL_SECRET to require a bearer token / query param for all requests.
+# Without it the panel is fully open — do NOT deploy without setting this.
+WEB_PANEL_SECRET = os.environ.get("WEB_PANEL_SECRET", "")
+
+if not WEB_PANEL_SECRET:
+    logger.warning(
+        "WEB_PANEL_SECRET is not set — the web panel has NO authentication! "
+        "Set this env var before deploying to production."
+    )
+
+# Derive a cookie token via HMAC so the raw secret is never stored in the browser.
+_COOKIE_TOKEN = (
+    hmac.new(
+        WEB_PANEL_SECRET.encode(), b"panel_cookie", hashlib.sha256
+    ).hexdigest()
+    if WEB_PANEL_SECRET
+    else ""
+)
+
+
+@app.before_request
+def _check_auth():
+    """Verify every request carries a valid secret (header, query-param, or cookie)."""
+    if not WEB_PANEL_SECRET:
+        return  # auth disabled (dev mode)
+
+    # Accept: Authorization: Bearer <secret>
+    auth_header = request.headers.get("Authorization", "")
+    if auth_header.startswith("Bearer ") and hmac.compare_digest(
+        auth_header[7:], WEB_PANEL_SECRET
+    ):
+        return
+
+    # Accept: ?token=<secret>  (useful for browser bookmarks)
+    token_param = request.args.get("token", "")
+    if token_param and hmac.compare_digest(token_param, WEB_PANEL_SECRET):
+        # Set a session cookie so the user doesn't need the token on every click
+        # (handled after response via after_request)
+        return
+
+    # Accept: HMAC cookie set by a previous token= visit
+    if request.cookies.get("panel_token") and hmac.compare_digest(
+        request.cookies["panel_token"], _COOKIE_TOKEN
+    ):
+        return
+
+    # Not authenticated
+    return jsonify({"error": "Unauthorized"}), 401
+
+
+@app.after_request
+def _set_auth_cookie(response):
+    """When the user authenticates via ?token=, persist an HMAC-derived cookie."""
+    if (
+        WEB_PANEL_SECRET
+        and request.args.get("token", "")
+        and hmac.compare_digest(request.args["token"], WEB_PANEL_SECRET)
+        and not request.cookies.get("panel_token")
+    ):
+        response.set_cookie(
+            "panel_token",
+            _COOKIE_TOKEN,
+            httponly=True,
+            secure=True,
+            samesite="Lax",
+            max_age=60 * 60 * 24 * 30,  # 30 days
+        )
+    return response
+
+
+# Drive folder ID (root folder for media files)
+DRIVE_FOLDER_ID = os.environ.get("GOOGLE_DRIVE_FOLDER_ID", "")
+
+# Expected column order in the sheet
+SHEET_COLUMNS = [
+    COL_ID, COL_STATUS, COL_NETWORK, COL_POST_TYPE,
+    COL_PUBLISH_AT, COL_CAPTION_IG, COL_CAPTION_FB,
+    COL_DRIVE_FILE_ID, COL_CLOUDINARY_URL, COL_RESULT, COL_ERROR,
+]
+
+
+# ═══════════════════════════════════════════════════════════════
+#  Pages
+# ═══════════════════════════════════════════════════════════════
+
+@app.route("/")
+def index():
+    return render_template("index.html")
+
+
+# ═══════════════════════════════════════════════════════════════
+#  API — Posts (Google Sheets)
+# ═══════════════════════════════════════════════════════════════
+
+@app.route("/api/posts", methods=["GET"])
+def api_get_posts():
+    """מחזיר את כל הפוסטים מהטבלה."""
+    try:
+        header, rows = sheets_read_all_rows()
+        if not header:
+            return jsonify({"posts": [], "header": []})
+
+        posts = []
+        for i, row in enumerate(rows, start=2):
+            post = {"_row": i}
+            for j, col_name in enumerate(header):
+                post[col_name] = row[j] if j < len(row) else ""
+            posts.append(post)
+
+        return jsonify({"posts": posts, "header": header})
+
+    except Exception as e:
+        logger.error(f"Error fetching posts: {e}", exc_info=True)
+        return jsonify({"error": str(e)}), 500
+
+
+def _normalize_publish_at(value: str) -> str:
+    """
+    Convert a publish_at value (potentially ISO 8601 with timezone) to
+    Israel-local 'YYYY-MM-DD HH:MM' format for storage in the sheet.
+    The cron publisher expects naive Israel-time strings.
+    """
+    if not value or not value.strip():
+        return value
+    try:
+        dt = dtparser.parse(value)
+        if dt.tzinfo is not None:
+            dt = dt.astimezone(TZ_IL)
+        else:
+            # If no timezone, assume it's already Israel time
+            dt = dt.replace(tzinfo=TZ_IL)
+        return dt.strftime("%Y-%m-%d %H:%M")
+    except (ValueError, TypeError):
+        return value  # pass through unparseable values as-is
+
+
+@app.route("/api/posts", methods=["POST"])
+def api_create_post():
+    """יצירת פוסט חדש (שורה חדשה בטבלה)."""
+    try:
+        data = request.json
+        header, rows = sheets_read_all_rows()
+
+        if not header:
+            return jsonify({"error": "Sheet has no header"}), 400
+
+        # Generate next ID
+        max_id = 0
+        for row in rows:
+            try:
+                idx = header.index(COL_ID)
+                val = int(row[idx]) if idx < len(row) else 0
+                max_id = max(max_id, val)
+            except (ValueError, IndexError):
+                pass
+        next_id = str(max_id + 1)
+
+        # Only allow user-editable fields — system fields are set by the server
+        allowed_fields = {
+            COL_NETWORK, COL_POST_TYPE, COL_PUBLISH_AT,
+            COL_CAPTION_IG, COL_CAPTION_FB, COL_DRIVE_FILE_ID,
+        }
+
+        # Build row values in header order
+        row_values = []
+        for col_name in header:
+            if col_name == COL_ID:
+                row_values.append(next_id)
+            elif col_name == COL_STATUS:
+                row_values.append(STATUS_READY)
+            elif col_name == COL_PUBLISH_AT:
+                row_values.append(_normalize_publish_at(data.get(col_name, "")))
+            elif col_name in allowed_fields:
+                row_values.append(data.get(col_name, ""))
+            else:
+                row_values.append("")
+
+        sheets_append_row(row_values)
+        logger.info(f"Created post ID {next_id}")
+
+        return jsonify({"success": True, "id": next_id})
+
+    except Exception as e:
+        logger.error(f"Error creating post: {e}", exc_info=True)
+        return jsonify({"error": str(e)}), 500
+
+
+def _verify_row_id(row_number: int, expected_id: str, header: list, rows: list) -> str | None:
+    """
+    Verify the row still contains the expected post ID.
+    Returns an error message if mismatched, or None if OK.
+    """
+    if not expected_id:
+        return None  # client didn't send an ID — skip check (backward compat)
+    try:
+        id_col = header.index(COL_ID)
+    except ValueError:
+        return None  # no ID column — can't verify
+    row_idx = row_number - 2  # rows are 0-indexed, row_number starts at 2
+    if row_idx < 0 or row_idx >= len(rows):
+        return "Row does not exist"
+    row = rows[row_idx]
+    actual_id = row[id_col] if id_col < len(row) else ""
+    if str(actual_id) != str(expected_id):
+        return f"Row {row_number} no longer contains post #{expected_id} (found #{actual_id}). Please refresh."
+    return None
+
+
+@app.route("/api/posts/<int:row_number>", methods=["PUT"])
+def api_update_post(row_number):
+    """עדכון פוסט קיים."""
+    if row_number < 2:
+        return jsonify({"error": "Invalid row number"}), 400
+
+    try:
+        data = request.json
+        header, rows = sheets_read_all_rows()
+
+        if not header:
+            return jsonify({"error": "Sheet has no header"}), 400
+
+        # Verify the row still holds the expected post
+        id_err = _verify_row_id(row_number, data.get("expected_id"), header, rows)
+        if id_err:
+            return jsonify({"error": id_err}), 409
+
+        # Only allow updating content fields — status is managed by the publisher
+        allowed_fields = {
+            COL_NETWORK, COL_POST_TYPE, COL_PUBLISH_AT,
+            COL_CAPTION_IG, COL_CAPTION_FB, COL_DRIVE_FILE_ID,
+        }
+
+        updates = {}
+        for key, value in data.items():
+            if key in allowed_fields:
+                if key == COL_PUBLISH_AT:
+                    updates[key] = _normalize_publish_at(value)
+                else:
+                    updates[key] = value
+
+        if updates:
+            sheets_update_cells(row_number, updates, header)
+            logger.info(f"Updated row {row_number}: {list(updates.keys())}")
+
+        return jsonify({"success": True})
+
+    except Exception as e:
+        logger.error(f"Error updating post: {e}", exc_info=True)
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/posts/<int:row_number>", methods=["DELETE"])
+def api_delete_post(row_number):
+    """מחיקת פוסט (שורה מהטבלה)."""
+    if row_number < 2:
+        return jsonify({"error": "Invalid row number"}), 400
+
+    try:
+        # Verify the row still holds the expected post
+        expected_id = request.args.get("expected_id")
+        if expected_id:
+            header, rows = sheets_read_all_rows()
+            if header:
+                id_err = _verify_row_id(row_number, expected_id, header, rows)
+                if id_err:
+                    return jsonify({"error": id_err}), 409
+
+        sheets_delete_row(row_number)
+        logger.info(f"Deleted row {row_number}")
+        return jsonify({"success": True})
+
+    except Exception as e:
+        logger.error(f"Error deleting post: {e}", exc_info=True)
+        return jsonify({"error": str(e)}), 500
+
+
+# ═══════════════════════════════════════════════════════════════
+#  API — Google Drive
+# ═══════════════════════════════════════════════════════════════
+
+def _is_folder_within_root(folder_id: str, root_id: str, max_depth: int = 10) -> bool:
+    """
+    Verify folder_id is the root or a descendant of root_id
+    by walking up the parent chain. Prevents folder traversal attacks.
+    """
+    if folder_id == root_id:
+        return True
+
+    svc = get_drive_service()
+    current = folder_id
+    for _ in range(max_depth):
+        try:
+            meta = svc.files().get(fileId=current, fields="parents").execute()
+            parents = meta.get("parents", [])
+            if not parents:
+                return False
+            if root_id in parents:
+                return True
+            current = parents[0]
+        except Exception:
+            return False
+    return False
+
+
+@app.route("/api/drive/files", methods=["GET"])
+def api_drive_files():
+    """מחזיר קבצים מתיקיית Drive."""
+    try:
+        folder_id = request.args.get("folder_id", DRIVE_FOLDER_ID)
+        if not folder_id:
+            return jsonify({"error": "No folder ID configured"}), 400
+
+        if not DRIVE_FOLDER_ID:
+            return jsonify({"error": "No root folder configured"}), 400
+
+        # Validate the folder is within the allowed root
+        if not _is_folder_within_root(folder_id, DRIVE_FOLDER_ID):
+            return jsonify({"error": "Access denied: folder outside allowed scope"}), 403
+
+        page_token = request.args.get("page_token")
+        result = drive_list_folder(folder_id, page_token)
+
+        return jsonify(result)
+
+    except Exception as e:
+        logger.error(f"Error listing Drive files: {e}", exc_info=True)
+        return jsonify({"error": str(e)}), 500
+
+
+
+# ═══════════════════════════════════════════════════════════════
+#  API — Config (public, non-sensitive)
+# ═══════════════════════════════════════════════════════════════
+
+@app.route("/api/config", methods=["GET"])
+def api_config():
+    """מחזיר הגדרות ציבוריות לפרונטאנד."""
+    return jsonify({
+        "driveFolderId": DRIVE_FOLDER_ID,
+        "columns": SHEET_COLUMNS,
+        "statuses": [STATUS_READY, STATUS_IN_PROGRESS, STATUS_POSTED, STATUS_ERROR],
+        "networks": [NETWORK_IG, NETWORK_FB, NETWORK_BOTH],
+        "postTypes": [POST_TYPE_FEED, POST_TYPE_REELS],
+    })
+
+
+# ═══════════════════════════════════════════════════════════════
+#  Main
+# ═══════════════════════════════════════════════════════════════
+
+if __name__ == "__main__":
+    port = int(os.environ.get("PORT", "8080"))
+    debug = os.environ.get("FLASK_DEBUG", "false").lower() == "true"
+    app.run(host="0.0.0.0", port=port, debug=debug)

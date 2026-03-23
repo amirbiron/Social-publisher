@@ -1,13 +1,15 @@
 """
 config.py — הגדרות סביבה וקבועים
+
+Pure constants (column names, status values, etc.) live in config_constants.py
+and are re-exported here so existing imports keep working.
 """
 
 import os
 import json
-from zoneinfo import ZoneInfo
 
-# ─── Timezone ────────────────────────────────────────────────
-TZ_IL = ZoneInfo("Asia/Jerusalem")
+# Re-export all pure constants
+from config_constants import *  # noqa: F401,F403
 
 # ─── Google ──────────────────────────────────────────────────
 GOOGLE_SA_JSON = os.environ["GOOGLE_SERVICE_ACCOUNT_JSON"]  # כל ה-JSON כמחרוזת
@@ -47,35 +49,6 @@ GOOGLE_SCOPES = [
     "https://www.googleapis.com/auth/spreadsheets",
     "https://www.googleapis.com/auth/drive.readonly",
 ]
-
-# ─── Sheet Column Names ─────────────────────────────────────
-# אם תשנה שמות עמודות בטבלה, שנה רק פה
-COL_ID = "id"
-COL_STATUS = "status"
-COL_NETWORK = "network"
-COL_POST_TYPE = "post_type"
-COL_PUBLISH_AT = "publish_at"
-COL_CAPTION_IG = "caption_ig"
-COL_CAPTION_FB = "caption_fb"
-COL_DRIVE_FILE_ID = "drive_file_id"
-COL_CLOUDINARY_URL = "cloudinary_url"
-COL_RESULT = "result"
-COL_ERROR = "error"
-
-# ─── Status Values ───────────────────────────────────────────
-STATUS_READY = "READY"
-STATUS_IN_PROGRESS = "IN_PROGRESS"
-STATUS_POSTED = "POSTED"
-STATUS_ERROR = "ERROR"
-
-# ─── Network Values ─────────────────────────────────────────
-NETWORK_IG = "IG"
-NETWORK_FB = "FB"
-NETWORK_BOTH = "IG+FB"
-
-# ─── Post Type Values ──────────────────────────────────────
-POST_TYPE_FEED = "FEED"
-POST_TYPE_REELS = "REELS"
 
 # ─── Retry ────────────────────────────────────────────────
 PUBLISH_MAX_RETRIES = int(os.environ.get("PUBLISH_MAX_RETRIES", "3"))
