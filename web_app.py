@@ -492,11 +492,17 @@ def api_drive_thumbnail(file_id):
             logger.debug(f"No thumbnailLink for file {file_id}")
             return Response(status=404)
 
-        # Use the Google API client's authenticated HTTP to fetch the thumbnail.
-        # This handles OAuth2 token refresh automatically and works with
-        # Google's CDN URLs that may require service-account auth.
+        # Fetch thumbnail via the Google API client's authenticated HTTP.
+        # Set a timeout to avoid blocking a worker indefinitely, and
+        # limit read size to avoid memory exhaustion from large responses.
         MAX_THUMB_BYTES = 5 * 1024 * 1024  # 5 MB safety cap
-        http_resp, data = svc._http.request(thumb_url)
+        prev_timeout = svc._http.http.timeout
+        svc._http.http.timeout = 10
+        try:
+            http_resp, data = svc._http.request(thumb_url)
+        finally:
+            svc._http.http.timeout = prev_timeout
+
         status_code = int(http_resp.status)
 
         if status_code != 200:
