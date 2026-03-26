@@ -455,7 +455,7 @@ def _is_folder_within_root(folder_id: str, root_id: str, max_depth: int = 10) ->
     current = folder_id
     for _ in range(max_depth):
         try:
-            meta = svc.files().get(fileId=current, fields="parents").execute()
+            meta = svc.files().get(fileId=current, fields="parents", supportsAllDrives=True).execute()
             parents = meta.get("parents", [])
             if not parents:
                 return False
@@ -488,7 +488,7 @@ def api_drive_thumbnail(file_id):
 
         # Verify the file belongs to the configured root folder tree
         svc = get_drive_service()
-        meta = svc.files().get(fileId=file_id, fields="thumbnailLink,parents").execute()
+        meta = svc.files().get(fileId=file_id, fields="thumbnailLink,parents", supportsAllDrives=True).execute()
 
         parents = meta.get("parents", [])
 

@@ -166,7 +166,7 @@ def drive_get_file_metadata(file_id: str) -> dict:
     svc = get_drive_service()
     return (
         svc.files()
-        .get(fileId=file_id, fields="id,name,mimeType,size")
+        .get(fileId=file_id, fields="id,name,mimeType,size", supportsAllDrives=True)
         .execute()
     )
 
@@ -176,7 +176,7 @@ def drive_download_bytes(file_id: str) -> bytes:
     מוריד את תוכן הקובץ כ-bytes מ-Drive (alt=media).
     """
     svc = get_drive_service()
-    request = svc.files().get_media(fileId=file_id)
+    request = svc.files().get_media(fileId=file_id, supportsAllDrives=True)
 
     buffer = io.BytesIO()
     downloader = MediaIoBaseDownload(buffer, request)
@@ -217,6 +217,8 @@ def drive_list_folder(folder_id: str, page_token: Optional[str] = None) -> dict:
             pageSize=50,
             pageToken=page_token,
             orderBy="name",
+            supportsAllDrives=True,
+            includeItemsFromAllDrives=True,
         )
         .execute()
     )
