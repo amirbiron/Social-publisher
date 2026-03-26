@@ -13,6 +13,7 @@ import re
 import sys
 import requests as http_requests
 from datetime import datetime, timezone
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from dateutil import parser as dtparser
 from flask import Flask, Response, jsonify, render_template, request
@@ -42,6 +43,7 @@ from config_constants import (
 )
 from google_api import (
     sheets_read_all_rows,
+    sheets_read_row,
     sheets_update_cells,
     sheets_append_row,
     sheets_delete_row,
@@ -49,6 +51,7 @@ from google_api import (
     drive_list_folder,
     get_drive_service,
 )
+from notifications import notify_health_issue
 
 # ─── Logging ─────────────────────────────────────────────────
 logging.basicConfig(
@@ -89,8 +92,8 @@ def _check_auth():
     if not WEB_PANEL_SECRET:
         return  # auth disabled (dev mode)
 
-    # Static assets are public (CSS, JS, images — no sensitive data)
-    if request.path.startswith("/static/"):
+    # Static assets and health check are public
+    if request.path.startswith("/static/") or request.path == "/api/health":
         return
 
     # Accept: Authorization: Bearer <secret>
@@ -468,14 +471,15 @@ def _is_folder_within_root(folder_id: str, root_id: str, max_depth: int = 10) ->
 
 
 def _is_known_drive_file(file_id: str) -> bool:
-    """Check if file_id exists in the Google Sheet's drive_file_id column."""
+    """Check if file_id exists in the Google Sheet's drive_file_id column.
+    Handles comma-separated IDs for carousel posts."""
     try:
         header, rows = sheets_read_all_rows()
         if not header:
             return False
         idx = header.index(COL_DRIVE_FILE_ID)
         return any(
-            idx < len(row) and row[idx] == file_id
+            idx < len(row) and file_id in {fid.strip() for fid in row[idx].split(",")}
             for row in rows
         )
     except (ValueError, Exception):
@@ -614,6 +618,134 @@ def api_drive_files():
         logger.error(f"Error listing Drive files: {e}", exc_info=True)
         return jsonify({"error": str(e)}), 500
 
+
+
+# ═══════════════════════════════════════════════════════════════
+#  API — Health Check (public, no auth)
+# ═══════════════════════════════════════════════════════════════
+
+# Cooldown: שולחים התראת טלגרם על שירות שנפל לכל היותר פעם ב-30 דקות
+HEALTH_NOTIFY_COOLDOWN_SECONDS = int(os.environ.get("HEALTH_NOTIFY_COOLDOWN_SECONDS", "1800"))
+_health_notify_cooldown: dict[str, datetime] = {}  # {service_name: last_notified_utc}
+
+# Cache: תוצאת health check נשמרת למשך 60 שניות למניעת ניצול API quotas
+HEALTH_CACHE_TTL_SECONDS = int(os.environ.get("HEALTH_CACHE_TTL_SECONDS", "60"))
+_health_cache: dict = {}  # {"result": ..., "status_code": ..., "timestamp": datetime}
+
+def _check_google_sheets() -> dict:
+    """בדיקת חיבור ל-Google Sheets — קורא רק את שורת ה-header."""
+    try:
+        header = sheets_read_row(1)
+        if header:
+            return {"status": "ok", "columns": len(header)}
+        return {"status": "error", "error": "Sheet is empty or has no header"}
+    except Exception as e:
+        return {"status": "error", "error": str(e)[:200]}
+
+
+def _check_google_drive() -> dict:
+    """בדיקת חיבור ל-Google Drive."""
+    try:
+        if not DRIVE_FOLDER_ID:
+            return {"status": "error", "error": "GOOGLE_DRIVE_FOLDER_ID not configured"}
+        svc = get_drive_service()
+        meta = svc.files().get(fileId=DRIVE_FOLDER_ID, fields="id,name", supportsAllDrives=True).execute()
+        return {"status": "ok", "folder": meta.get("name", DRIVE_FOLDER_ID)}
+    except Exception as e:
+        return {"status": "error", "error": str(e)[:200]}
+
+
+def _check_cloudinary() -> dict:
+    """בדיקת חיבור ל-Cloudinary (ping via API)."""
+    try:
+        import cloudinary.api
+        result = cloudinary.api.ping()
+        if result.get("status") == "ok":
+            return {"status": "ok"}
+        return {"status": "error", "error": f"Unexpected response: {result}"}
+    except Exception as e:
+        return {"status": "error", "error": str(e)[:200]}
+
+
+def _check_meta_token(token_name: str, token: str) -> dict:
+    """בדיקת תוקף טוקן Meta (debug_token או /me)."""
+    if not token:
+        return {"status": "error", "error": f"{token_name} not configured"}
+    try:
+        meta_api_version = os.environ.get("META_API_VERSION", "v21.0")
+        url = f"https://graph.facebook.com/{meta_api_version}/me"
+        resp = http_requests.get(url, params={"access_token": token}, timeout=10)
+        if resp.ok:
+            data = resp.json()
+            return {"status": "ok", "name": data.get("name", "OK")}
+        error = resp.json().get("error", {})
+        return {"status": "error", "error": error.get("message", resp.text)[:200]}
+    except Exception as e:
+        return {"status": "error", "error": str(e)[:200]}
+
+
+@app.route("/api/health", methods=["GET"])
+def api_health():
+    """
+    בדיקת תקינות כל השירותים החיצוניים.
+    מחזיר סטטוס לכל שירות + סטטוס כללי.
+    לא דורש אימות — מיועד ל-uptime monitoring.
+    תוצאות נשמרות ב-cache למשך 60 שניות למניעת ניצול API quotas.
+    """
+    # החזרת תוצאה מה-cache אם עדיין תקפה
+    now = datetime.now(timezone.utc)
+    if _health_cache:
+        age = (now - _health_cache["timestamp"]).total_seconds()
+        if age < HEALTH_CACHE_TTL_SECONDS:
+            return jsonify(_health_cache["result"]), _health_cache["status_code"]
+
+    ig_token = os.environ.get("IG_ACCESS_TOKEN", "")
+    fb_token = os.environ.get("FB_PAGE_ACCESS_TOKEN", "")
+
+    checks = {}
+
+    # רץ במקביל לחיסכון בזמן
+    with ThreadPoolExecutor(max_workers=5) as pool:
+        futures = {
+            pool.submit(_check_google_sheets): "google_sheets",
+            pool.submit(_check_google_drive): "google_drive",
+            pool.submit(_check_cloudinary): "cloudinary",
+            pool.submit(_check_meta_token, "IG_ACCESS_TOKEN", ig_token): "instagram",
+            pool.submit(_check_meta_token, "FB_PAGE_ACCESS_TOKEN", fb_token): "facebook",
+        }
+        for future in as_completed(futures):
+            name = futures[future]
+            try:
+                checks[name] = future.result()
+            except Exception as e:
+                checks[name] = {"status": "error", "error": str(e)[:200]}
+
+    all_ok = all(c["status"] == "ok" for c in checks.values())
+    status_code = 200 if all_ok else 503
+
+    # שליחת התראות טלגרם על שירותים שנפלו (עם cooldown למניעת ספאם)
+    now = datetime.now(timezone.utc)
+    if not all_ok:
+        for name, check in checks.items():
+            if check["status"] == "error":
+                last_sent = _health_notify_cooldown.get(name)
+                if last_sent is None or (now - last_sent).total_seconds() >= HEALTH_NOTIFY_COOLDOWN_SECONDS:
+                    notify_health_issue(name, check.get("error", "Unknown"))
+                    _health_notify_cooldown[name] = now
+    else:
+        # הכל תקין — מאפסים את ה-cooldown כדי שהתראה הבאה תישלח מיד
+        _health_notify_cooldown.clear()
+
+    result = {
+        "status": "healthy" if all_ok else "unhealthy",
+        "services": checks,
+        "timestamp": now.isoformat(),
+    }
+
+    # שמירה ב-cache
+    _health_cache.update({"result": result, "status_code": status_code, "timestamp": now})
+
+    return jsonify(result), status_code
 
 
 # ═══════════════════════════════════════════════════════════════

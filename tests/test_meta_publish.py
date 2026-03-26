@@ -11,10 +11,15 @@ import pytest
 from meta_publish import (
     ig_publish_feed,
     fb_publish_feed,
+    ig_publish_carousel,
+    fb_publish_carousel,
     _ig_create_container,
+    _ig_create_carousel_item,
+    _ig_create_carousel_container,
     _ig_publish_container,
     _ig_wait_for_container_ready,
     _fb_publish_reel,
+    _fb_upload_unpublished_photo,
 )
 
 
@@ -363,4 +368,131 @@ class TestFbPublishReel:
         with pytest.raises(Exception, match="403"):
             _fb_publish_reel("https://example.com/vid.mp4", "cap")
 
+        assert mock_post.call_count == 3
+
+
+# ═══════════════════════════════════════════════════════════════
+#  Instagram Carousel
+# ═══════════════════════════════════════════════════════════════
+
+class TestIgCarousel:
+    @patch("meta_publish._ig_publish_container", return_value="published_id")
+    @patch("meta_publish._ig_wait_for_container_ready")
+    @patch("meta_publish._ig_create_carousel_container", return_value="carousel_c")
+    @patch("meta_publish._ig_create_carousel_item", side_effect=["item_1", "item_2", "item_3"])
+    def test_carousel_full_flow(self, mock_item, mock_carousel, mock_wait, mock_publish):
+        urls = ["https://a.com/1.jpg", "https://a.com/2.jpg", "https://a.com/3.jpg"]
+        mimes = ["image/jpeg", "image/jpeg", "image/jpeg"]
+
+        result = ig_publish_carousel(urls, "carousel caption", mimes)
+
+        assert result == "published_id"
+        assert mock_item.call_count == 3
+        mock_carousel.assert_called_once_with(["item_1", "item_2", "item_3"], "carousel caption")
+        # Wait called for 3 items + 1 carousel container = 4 times
+        assert mock_wait.call_count == 4
+        mock_publish.assert_called_once_with("carousel_c")
+
+    def test_carousel_too_few_items(self):
+        with pytest.raises(ValueError, match="at least 2"):
+            ig_publish_carousel(["https://a.com/1.jpg"], "cap", ["image/jpeg"])
+
+    def test_carousel_too_many_items(self):
+        urls = [f"https://a.com/{i}.jpg" for i in range(11)]
+        mimes = ["image/jpeg"] * 11
+        with pytest.raises(ValueError, match="at most 10"):
+            ig_publish_carousel(urls, "cap", mimes)
+
+    @patch("meta_publish.requests.post")
+    def test_create_carousel_item_image(self, mock_post):
+        mock_post.return_value = _mock_response({"id": "item_x"})
+        result = _ig_create_carousel_item("https://a.com/img.jpg", is_video=False)
+        assert result == "item_x"
+        data = mock_post.call_args[1]["data"]
+        assert data["is_carousel_item"] == "true"
+        assert data["image_url"] == "https://a.com/img.jpg"
+        assert "video_url" not in data
+
+    @patch("meta_publish.requests.post")
+    def test_create_carousel_item_video(self, mock_post):
+        mock_post.return_value = _mock_response({"id": "item_v"})
+        result = _ig_create_carousel_item("https://a.com/vid.mp4", is_video=True)
+        assert result == "item_v"
+        data = mock_post.call_args[1]["data"]
+        assert data["is_carousel_item"] == "true"
+        assert data["video_url"] == "https://a.com/vid.mp4"
+        assert data["media_type"] == "VIDEO"
+
+    @patch("meta_publish.requests.post")
+    def test_create_carousel_container(self, mock_post):
+        mock_post.return_value = _mock_response({"id": "car_123"})
+        result = _ig_create_carousel_container(["a", "b", "c"], "my caption")
+        assert result == "car_123"
+        data = mock_post.call_args[1]["data"]
+        assert data["media_type"] == "CAROUSEL"
+        assert data["children"] == "a,b,c"
+        assert data["caption"] == "my caption"
+
+
+# ═══════════════════════════════════════════════════════════════
+#  Facebook Carousel (multi-photo)
+# ═══════════════════════════════════════════════════════════════
+
+class TestFbCarousel:
+    @patch("meta_publish.requests.post")
+    def test_carousel_full_flow(self, mock_post):
+        """Upload 2 unpublished photos then create post with attached_media."""
+        mock_post.side_effect = [
+            _mock_response({"id": "photo_1"}),   # unpublished photo 1
+            _mock_response({"id": "photo_2"}),   # unpublished photo 2
+            _mock_response({"id": "post_999"}),  # feed post
+        ]
+
+        result = fb_publish_carousel(
+            ["https://a.com/1.jpg", "https://a.com/2.jpg"],
+            "multi caption",
+            ["image/jpeg", "image/jpeg"],
+        )
+
+        assert result == "post_999"
+        assert mock_post.call_count == 3
+
+        # Verify unpublished photos
+        first_call = mock_post.call_args_list[0][1]["data"]
+        assert first_call["published"] == "false"
+
+        # Verify feed post has attached_media
+        feed_call = mock_post.call_args_list[2][1]["data"]
+        assert feed_call["message"] == "multi caption"
+        assert "attached_media[0]" in feed_call
+        assert "attached_media[1]" in feed_call
+
+    def test_carousel_too_few_items(self):
+        with pytest.raises(ValueError, match="at least 2"):
+            fb_publish_carousel(["https://a.com/1.jpg"], "cap", ["image/jpeg"])
+
+    @patch("meta_publish.requests.post")
+    def test_upload_unpublished_photo(self, mock_post):
+        mock_post.return_value = _mock_response({"id": "up_photo"})
+        result = _fb_upload_unpublished_photo("https://a.com/img.jpg")
+        assert result == "up_photo"
+        data = mock_post.call_args[1]["data"]
+        assert data["published"] == "false"
+
+    @patch("meta_publish.requests.post")
+    def test_mixed_media_carousel(self, mock_post):
+        """Carousel with images and video."""
+        mock_post.side_effect = [
+            _mock_response({"id": "photo_1"}),   # unpublished photo
+            _mock_response({"id": "video_1"}),   # unpublished video
+            _mock_response({"id": "post_mixed"}),  # feed post
+        ]
+
+        result = fb_publish_carousel(
+            ["https://a.com/1.jpg", "https://a.com/2.mp4"],
+            "mixed caption",
+            ["image/jpeg", "video/mp4"],
+        )
+
+        assert result == "post_mixed"
         assert mock_post.call_count == 3

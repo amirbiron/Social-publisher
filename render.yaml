@@ -38,6 +38,10 @@ services:
         sync: false
       - key: WEB_PANEL_SECRET
         sync: false
+      - key: TELEGRAM_BOT_TOKEN
+        sync: false
+      - key: TELEGRAM_CHAT_ID
+        sync: false
 
   # ─── Cron Job (Publisher) ────────────────────────────────────
   - type: cron
@@ -76,3 +80,7 @@ services:
         value: "3"
       - key: PUBLISH_RETRY_DELAY
         value: "5"
+      - key: TELEGRAM_BOT_TOKEN
+        sync: false
+      - key: TELEGRAM_CHAT_ID
+        sync: false

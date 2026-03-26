@@ -3,6 +3,7 @@ meta_publish.py — פרסום ל-Instagram ו-Facebook דרך Graph API
 
 Instagram: 2 קריאות (create container → publish)
 Facebook: תמונה = /photos, וידאו = /videos, ריל = /video_reels
+קרוסלה: מספר תמונות/סרטונים בפוסט אחד (2-10 פריטים)
 """
 
 import logging
@@ -143,6 +144,95 @@ def _ig_publish_container(container_id: str) -> str:
 
 
 # ═══════════════════════════════════════════════════════════════
+#  Instagram — Carousel (2-10 items)
+# ═══════════════════════════════════════════════════════════════
+
+def ig_publish_carousel(
+    cloud_urls: list[str],
+    caption: str,
+    mime_types: list[str],
+) -> str:
+    """
+    מפרסם קרוסלה באינסטגרם (2-10 תמונות/סרטונים).
+    שלבים:
+      1. יצירת container לכל פריט (ללא caption, עם is_carousel_item=true)
+      2. המתנה שכל ה-containers מוכנים
+      3. יצירת carousel container עם children + caption
+      4. המתנה ופרסום
+    מחזיר media ID.
+    """
+    if len(cloud_urls) < 2:
+        raise ValueError("Carousel requires at least 2 items")
+    if len(cloud_urls) > 10:
+        raise ValueError("Carousel supports at most 10 items")
+
+    # ── שלב 1: יצירת containers לפריטים ──
+    child_ids = []
+    for i, (url, mime) in enumerate(zip(cloud_urls, mime_types)):
+        is_video = mime in VIDEO_MIMES
+        container_id = _ig_create_carousel_item(url, is_video)
+        logger.info(f"IG carousel item {i+1}/{len(cloud_urls)}: {container_id}")
+        child_ids.append(container_id)
+
+    # ── שלב 2: המתנה לעיבוד כל הפריטים ──
+    for i, (cid, mime) in enumerate(zip(child_ids, mime_types)):
+        is_video = mime in VIDEO_MIMES
+        _ig_wait_for_container_ready(cid, is_video=is_video)
+        logger.info(f"IG carousel item {i+1}/{len(child_ids)} ready")
+
+    # ── שלב 3: יצירת carousel container ──
+    carousel_id = _ig_create_carousel_container(child_ids, caption)
+
+    # ── שלב 4: המתנה ופרסום ──
+    _ig_wait_for_container_ready(carousel_id)
+    result_id = _ig_publish_container(carousel_id)
+    logger.info(f"Instagram carousel published: {result_id} ({len(cloud_urls)} items)")
+    return result_id
+
+
+def _ig_create_carousel_item(cloud_url: str, is_video: bool) -> str:
+    """יצירת container לפריט בתוך קרוסלה (ללא caption)."""
+    url = f"{META_BASE_URL}/{IG_USER_ID}/media"
+    data = {
+        "is_carousel_item": "true",
+        "access_token": IG_ACCESS_TOKEN,
+    }
+
+    if is_video:
+        data["video_url"] = cloud_url
+        data["media_type"] = "VIDEO"
+    else:
+        data["image_url"] = cloud_url
+
+    resp = requests.post(url, data=data, timeout=TIMEOUT_SHORT)
+    if not resp.ok:
+        logger.error(f"IG carousel item failed ({resp.status_code}): {resp.text}")
+        resp.raise_for_status()
+
+    return resp.json()["id"]
+
+
+def _ig_create_carousel_container(child_ids: list[str], caption: str) -> str:
+    """יצירת carousel container מ-children containers."""
+    url = f"{META_BASE_URL}/{IG_USER_ID}/media"
+    data = {
+        "media_type": "CAROUSEL",
+        "caption": caption,
+        "children": ",".join(child_ids),
+        "access_token": IG_ACCESS_TOKEN,
+    }
+
+    resp = requests.post(url, data=data, timeout=TIMEOUT_SHORT)
+    if not resp.ok:
+        logger.error(f"IG carousel container failed ({resp.status_code}): {resp.text}")
+        resp.raise_for_status()
+
+    carousel_id = resp.json()["id"]
+    logger.info(f"IG carousel container created: {carousel_id} ({len(child_ids)} children)")
+    return carousel_id
+
+
+# ═══════════════════════════════════════════════════════════════
 #  Facebook Page — Feed / Reels
 # ═══════════════════════════════════════════════════════════════
 
@@ -261,3 +351,87 @@ def _fb_publish_reel(cloud_url: str, caption: str) -> str:
 
     logger.info(f"FB reel published: {video_id}")
     return video_id
+
+
+# ═══════════════════════════════════════════════════════════════
+#  Facebook Page — Multi-photo post
+# ═══════════════════════════════════════════════════════════════
+
+def fb_publish_carousel(
+    cloud_urls: list[str],
+    caption: str,
+    mime_types: list[str],
+) -> str:
+    """
+    מפרסם פוסט עם מספר תמונות בפייסבוק.
+    שלבים:
+      1. העלאת כל תמונה כ-unpublished photo
+      2. יצירת פוסט feed עם attached_media
+    סרטונים בתוך קרוסלה: מעלים כרגיל (FB תומך ב-mixed media).
+    מחזיר post_id.
+    """
+    if len(cloud_urls) < 2:
+        raise ValueError("Carousel requires at least 2 items")
+
+    # ── שלב 1: העלאת כל פריט כ-unpublished ──
+    media_ids = []
+    for i, (url, mime) in enumerate(zip(cloud_urls, mime_types)):
+        is_video = mime in VIDEO_MIMES
+        if is_video:
+            media_id = _fb_upload_unpublished_video(url)
+        else:
+            media_id = _fb_upload_unpublished_photo(url)
+        logger.info(f"FB carousel item {i+1}/{len(cloud_urls)}: {media_id}")
+        media_ids.append(media_id)
+
+    # ── שלב 2: יצירת פוסט feed עם כל התמונות ──
+    url = f"{META_BASE_URL}/{FB_PAGE_ID}/feed"
+    data = {
+        "message": caption,
+        "access_token": FB_PAGE_ACCESS_TOKEN,
+    }
+    for i, mid in enumerate(media_ids):
+        data[f"attached_media[{i}]"] = f'{{"media_fbid":"{mid}"}}'
+
+    resp = requests.post(url, data=data, timeout=TIMEOUT_SHORT)
+    if not resp.ok:
+        logger.error(f"FB carousel post failed ({resp.status_code}): {resp.text}")
+        resp.raise_for_status()
+
+    post_id = resp.json().get("id")
+    logger.info(f"FB carousel published: {post_id} ({len(media_ids)} items)")
+    return post_id
+
+
+def _fb_upload_unpublished_photo(cloud_url: str) -> str:
+    """העלאת תמונה כ-unpublished (לשימוש ב-multi-photo post)."""
+    url = f"{META_BASE_URL}/{FB_PAGE_ID}/photos"
+    data = {
+        "url": cloud_url,
+        "published": "false",
+        "access_token": FB_PAGE_ACCESS_TOKEN,
+    }
+
+    resp = requests.post(url, data=data, timeout=TIMEOUT_SHORT)
+    if not resp.ok:
+        logger.error(f"FB unpublished photo failed ({resp.status_code}): {resp.text}")
+        resp.raise_for_status()
+
+    return resp.json()["id"]
+
+
+def _fb_upload_unpublished_video(cloud_url: str) -> str:
+    """העלאת וידאו כ-unpublished (לשימוש ב-multi-media post)."""
+    url = f"{META_BASE_URL}/{FB_PAGE_ID}/videos"
+    data = {
+        "file_url": cloud_url,
+        "published": "false",
+        "access_token": FB_PAGE_ACCESS_TOKEN,
+    }
+
+    resp = requests.post(url, data=data, timeout=TIMEOUT_LONG)
+    if not resp.ok:
+        logger.error(f"FB unpublished video failed ({resp.status_code}): {resp.text}")
+        resp.raise_for_status()
+
+    return resp.json()["id"]

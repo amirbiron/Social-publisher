@@ -15,6 +15,7 @@ let editPostId = null;
 // Drive browser state
 let driveStack = [];       // [{folderId, name}] for breadcrumb
 let selectedDriveFile = null;
+let selectedDriveFiles = [];   // [{id, name}] for multi-select (carousel)
 
 // Filter state
 let filters = { status: '', network: '', dateFrom: '', dateTo: '', search: '' };
@@ -207,13 +208,17 @@ function renderPosts() {
     const captionIg = truncate(post.caption_ig, 40);
     const captionFb = truncate(post.caption_fb, 40);
 
-    // Thumbnail + file name
-    const thumbSrc = `/api/drive/thumbnail/${encodeURIComponent(post.drive_file_id)}`;
-    const fileCell = post.drive_file_id
+    // Thumbnail + file name (support comma-separated multi-file IDs)
+    const fileIds = (post.drive_file_id || '').split(',').map(s => s.trim()).filter(Boolean);
+    const firstFileId = fileIds[0] || '';
+    const thumbSrc = firstFileId ? `/api/drive/thumbnail/${encodeURIComponent(firstFileId)}` : '';
+    const multiLabel = fileIds.length > 1 ? `<span class="file-count-badge">${fileIds.length}</span>` : '';
+    const fileCell = firstFileId
       ? `<div class="cell-file-preview">
            <img class="file-thumbnail" src="${thumbSrc}" alt="" loading="lazy" onclick="openLightbox(this.src)" onerror="this.style.display='none'; this.nextElementSibling.style.display='flex'">
            <span class="file-thumbnail-fallback" style="display:none">&#128247;</span>
-           <span class="file-name-text" title="${escapeHtml(post.drive_file_id)}">${truncate(post.drive_file_id, 14)}</span>
+           ${multiLabel}
+           <span class="file-name-text" title="${escapeHtml(post.drive_file_id)}">${fileIds.length > 1 ? fileIds.length + ' קבצים' : truncate(firstFileId, 14)}</span>
          </div>`
       : '<span style="color:var(--color-text-muted)">-</span>';
 
@@ -238,13 +243,16 @@ function renderPosts() {
   // ── Mobile cards ──
   if (cardsEl) {
     cardsEl.innerHTML = prepared.map(({ post, badge, network, postType, publishAt, canEdit, canDelete }) => {
-      const filePart = post.drive_file_id
+      const mFileIds = (post.drive_file_id || '').split(',').map(s => s.trim()).filter(Boolean);
+      const mFirstId = mFileIds[0] || '';
+      const mFileLabel = mFileIds.length > 1 ? `${mFileIds.length} קבצים` : truncate(mFirstId, 20);
+      const filePart = mFirstId
         ? `<div class="post-card-divider"></div>
            <div class="post-card-row">
              <span class="post-card-label">קובץ</span>
              <div class="post-card-file">
-               <img src="/api/drive/thumbnail/${encodeURIComponent(post.drive_file_id)}" alt="" loading="lazy" onclick="openLightbox(this.src)" onerror="this.style.display='none'">
-               <span>${truncate(post.drive_file_id, 20)}</span>
+               <img src="/api/drive/thumbnail/${encodeURIComponent(mFirstId)}" alt="" loading="lazy" onclick="openLightbox(this.src)" onerror="this.style.display='none'">
+               <span>${mFileLabel}</span>
              </div>
            </div>`
         : '';
@@ -328,7 +336,9 @@ function resetPostForm({ title, rowNumber = '', network = 'IG+FB', postType = 'F
   document.getElementById('form-drive-file-id-manual').value = '';
 
   if (driveFileId) {
-    document.getElementById('selected-file-name').textContent = driveFileId;
+    const fileCount = driveFileId.split(',').filter(s => s.trim()).length;
+    const displayText = fileCount > 1 ? `${fileCount} קבצים נבחרו` : driveFileId;
+    document.getElementById('selected-file-name').textContent = displayText;
     showElement('drive-file-display');
   } else {
     hideElement('drive-file-display');
@@ -573,8 +583,9 @@ function openDriveBrowser() {
   }
 
   selectedDriveFile = null;
+  selectedDriveFiles = [];
   driveStack = [{ folderId: config.driveFolderId, name: 'תיקייה ראשית' }];
-  document.getElementById('btn-confirm-drive').disabled = true;
+  _updateDriveConfirmBtn();
   openModal('drive-modal');
   loadDriveFolder(config.driveFolderId);
 }
@@ -657,14 +668,16 @@ async function loadDriveFolder(folderId) {
 function navigateDriveFolder(folderId, name) {
   driveStack.push({ folderId, name });
   selectedDriveFile = null;
-  document.getElementById('btn-confirm-drive').disabled = true;
+  selectedDriveFiles = [];
+  _updateDriveConfirmBtn();
   loadDriveFolder(folderId);
 }
 
 function navigateDriveBreadcrumb(index) {
   driveStack = driveStack.slice(0, index + 1);
   selectedDriveFile = null;
-  document.getElementById('btn-confirm-drive').disabled = true;
+  selectedDriveFiles = [];
+  _updateDriveConfirmBtn();
   loadDriveFolder(driveStack[index].folderId);
 }
 
@@ -681,18 +694,47 @@ function renderDriveBreadcrumb() {
 }
 
 function selectDriveFile(el, fileId, fileName) {
-  // Deselect previous
-  document.querySelectorAll('.drive-file.selected').forEach(e => e.classList.remove('selected'));
-  el.classList.add('selected');
-  selectedDriveFile = { id: fileId, name: fileName };
-  document.getElementById('btn-confirm-drive').disabled = false;
+  // Toggle multi-select: click adds/removes from selection
+  const idx = selectedDriveFiles.findIndex(f => f.id === fileId);
+  if (idx !== -1) {
+    // Deselect
+    selectedDriveFiles.splice(idx, 1);
+    el.classList.remove('selected');
+  } else {
+    if (selectedDriveFiles.length >= 10) {
+      showToast('ניתן לבחור עד 10 קבצים לקרוסלה', 'error');
+      return;
+    }
+    selectedDriveFiles.push({ id: fileId, name: fileName });
+    el.classList.add('selected');
+  }
+  // Keep backward-compat for single file
+  selectedDriveFile = selectedDriveFiles.length === 1 ? selectedDriveFiles[0] : null;
+  _updateDriveConfirmBtn();
+}
+
+function _updateDriveConfirmBtn() {
+  const btn = document.getElementById('btn-confirm-drive');
+  const count = selectedDriveFiles.length;
+  btn.disabled = count === 0;
+  if (count > 1) {
+    btn.textContent = `בחירת ${count} קבצים`;
+  } else {
+    btn.textContent = 'בחירה';
+  }
 }
 
 function confirmDriveSelection() {
-  if (!selectedDriveFile) return;
+  if (selectedDriveFiles.length === 0) return;
 
-  document.getElementById('form-drive-file-id').value = selectedDriveFile.id;
-  document.getElementById('selected-file-name').textContent = selectedDriveFile.name;
+  const ids = selectedDriveFiles.map(f => f.id).join(',');
+  const names = selectedDriveFiles.map(f => f.name);
+  const displayName = names.length === 1
+    ? names[0]
+    : `${names.length} קבצים: ${names.join(', ')}`;
+
+  document.getElementById('form-drive-file-id').value = ids;
+  document.getElementById('selected-file-name').textContent = displayName;
   showElement('drive-file-display');
   hideElement('form-drive-file-id-manual');
 
@@ -702,6 +744,8 @@ function confirmDriveSelection() {
 function clearDriveFile() {
   document.getElementById('form-drive-file-id').value = '';
   document.getElementById('form-drive-file-id-manual').value = '';
+  selectedDriveFiles = [];
+  selectedDriveFile = null;
   hideElement('drive-file-display');
 }
 
