@@ -383,6 +383,24 @@ class TestCleanup:
         deleted = cleanup_old_cloudinary_assets(HEADER, rows, NOW_UTC)
         assert deleted == 0
 
+    @patch("main.sheets_update_cells")
+    @patch("main.delete_from_cloudinary", return_value=True)
+    def test_deletes_carousel_multi_url_assets(self, mock_delete, mock_sheets):
+        """Comma-separated Cloudinary URLs (carousel) should all be deleted."""
+        urls = (
+            "https://res.cloudinary.com/x/image/upload/v1/social-publisher/a.jpg,"
+            "https://res.cloudinary.com/x/image/upload/v1/social-publisher/b.jpg,"
+            "https://res.cloudinary.com/x/video/upload/v1/social-publisher/c.mp4"
+        )
+        rows = [
+            ["1", "POSTED", "IG", "FEED", "2026-01-01 10:00", "", "",
+             "f1,f2,f3", urls, "r1", ""],
+        ]
+        deleted = cleanup_old_cloudinary_assets(HEADER, rows, NOW_UTC)
+        assert deleted == 3
+        assert mock_delete.call_count == 3
+        mock_sheets.assert_called_once()  # cleared URL field once
+
 
 # ═══════════════════════════════════════════════════════════════
 #  process_row — IG+FB (dual publish)

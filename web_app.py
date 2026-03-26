@@ -471,14 +471,15 @@ def _is_folder_within_root(folder_id: str, root_id: str, max_depth: int = 10) ->
 
 
 def _is_known_drive_file(file_id: str) -> bool:
-    """Check if file_id exists in the Google Sheet's drive_file_id column."""
+    """Check if file_id exists in the Google Sheet's drive_file_id column.
+    Handles comma-separated IDs for carousel posts."""
     try:
         header, rows = sheets_read_all_rows()
         if not header:
             return False
         idx = header.index(COL_DRIVE_FILE_ID)
         return any(
-            idx < len(row) and row[idx] == file_id
+            idx < len(row) and file_id in {fid.strip() for fid in row[idx].split(",")}
             for row in rows
         )
     except (ValueError, Exception):

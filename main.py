@@ -390,19 +390,28 @@ def cleanup_old_cloudinary_assets(
         if dt_il.astimezone(timezone.utc) > cutoff:
             continue
 
-        # חילוץ public_id ו-resource_type מה-URL
-        match = _CLOUDINARY_URL_RE.match(cloud_url)
-        if not match:
-            logger.warning(f"Row {i}: Cannot parse Cloudinary URL: {cloud_url}")
-            continue
+        # חילוץ public_id ו-resource_type מכל URL (תמיכה בקרוסלה עם URLs מופרדים בפסיק)
+        urls = [u.strip() for u in cloud_url.split(",") if u.strip()]
+        all_deleted = True
 
-        public_id = match.group("pid")
-        resource_type = match.group("rtype")
+        for url in urls:
+            match = _CLOUDINARY_URL_RE.match(url)
+            if not match:
+                logger.warning(f"Row {i}: Cannot parse Cloudinary URL: {url}")
+                all_deleted = False
+                continue
 
-        logger.info(f"Row {i}: Deleting old asset {public_id} ({resource_type})")
-        if delete_from_cloudinary(public_id, resource_type=resource_type):
+            public_id = match.group("pid")
+            resource_type = match.group("rtype")
+
+            logger.info(f"Row {i}: Deleting old asset {public_id} ({resource_type})")
+            if delete_from_cloudinary(public_id, resource_type=resource_type):
+                deleted += 1
+            else:
+                all_deleted = False
+
+        if all_deleted:
             sheets_update_cells(i, {COL_CLOUDINARY_URL: ""}, header)
-            deleted += 1
 
     return deleted
 
