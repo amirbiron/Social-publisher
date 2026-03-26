@@ -29,16 +29,18 @@ class TestHealthEndpoint:
         assert data["status"] == "healthy"
         assert all(s["status"] == "ok" for s in data["services"].values())
 
+    @patch("web_app.notify_health_issue")
     @patch("web_app._check_meta_token", return_value={"status": "ok", "name": "Page"})
     @patch("web_app._check_cloudinary", return_value={"status": "error", "error": "timeout"})
     @patch("web_app._check_google_drive", return_value={"status": "ok", "folder": "Media"})
     @patch("web_app._check_google_sheets", return_value={"status": "ok", "columns": 11})
-    def test_one_unhealthy_returns_503(self, mock_sheets, mock_drive, mock_cloud, mock_meta, client):
+    def test_one_unhealthy_returns_503(self, mock_sheets, mock_drive, mock_cloud, mock_meta, mock_notify, client):
         resp = client.get("/api/health")
         assert resp.status_code == 503
         data = json.loads(resp.data)
         assert data["status"] == "unhealthy"
         assert data["services"]["cloudinary"]["status"] == "error"
+        mock_notify.assert_called_once_with("cloudinary", "timeout")
 
     def test_no_auth_required(self, client):
         """Health check should not require authentication."""

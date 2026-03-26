@@ -72,6 +72,14 @@ class TestNotifyFunctions:
         assert "Something broke" in msg
 
     @patch("notifications.send_telegram")
+    def test_notify_publish_error_escapes_html(self, mock_send):
+        notify_publish_error("5", 'Error: <script>alert("xss")</script> & more')
+        msg = mock_send.call_args[0][0]
+        assert "<script>" not in msg
+        assert "&lt;script&gt;" in msg
+        assert "&amp; more" in msg
+
+    @patch("notifications.send_telegram")
     def test_notify_partial_success(self, mock_send):
         notify_partial_success("7", "IG:123", "FB: timeout")
         mock_send.assert_called_once()
@@ -80,11 +88,25 @@ class TestNotifyFunctions:
         assert "IG:123" in msg
 
     @patch("notifications.send_telegram")
+    def test_notify_partial_success_escapes_html(self, mock_send):
+        notify_partial_success("3", "IG:<ok>", "FB: <error>")
+        msg = mock_send.call_args[0][0]
+        assert "&lt;ok&gt;" in msg
+        assert "&lt;error&gt;" in msg
+
+    @patch("notifications.send_telegram")
     def test_notify_health_issue(self, mock_send):
         notify_health_issue("Cloudinary", "connection refused")
         mock_send.assert_called_once()
         msg = mock_send.call_args[0][0]
         assert "Cloudinary" in msg
+
+    @patch("notifications.send_telegram")
+    def test_notify_health_issue_escapes_html(self, mock_send):
+        notify_health_issue("Meta", "Token <expired> & invalid")
+        msg = mock_send.call_args[0][0]
+        assert "&lt;expired&gt;" in msg
+        assert "&amp; invalid" in msg
 
 
 class TestTruncate:

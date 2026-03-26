@@ -50,6 +50,7 @@ from google_api import (
     drive_list_folder,
     get_drive_service,
 )
+from notifications import notify_health_issue
 
 # ─── Logging ─────────────────────────────────────────────────
 logging.basicConfig(
@@ -703,6 +704,12 @@ def api_health():
 
     all_ok = all(c["status"] == "ok" for c in checks.values())
     status_code = 200 if all_ok else 503
+
+    # שליחת התראות טלגרם על שירותים שנפלו
+    if not all_ok:
+        for name, check in checks.items():
+            if check["status"] == "error":
+                notify_health_issue(name, check.get("error", "Unknown"))
 
     return jsonify({
         "status": "healthy" if all_ok else "unhealthy",
