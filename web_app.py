@@ -89,6 +89,10 @@ def _check_auth():
     if not WEB_PANEL_SECRET:
         return  # auth disabled (dev mode)
 
+    # Static assets are public (CSS, JS, images — no sensitive data)
+    if request.path.startswith("/static/"):
+        return
+
     # Accept: Authorization: Bearer <secret>
     auth_header = request.headers.get("Authorization", "")
     if auth_header.startswith("Bearer ") and hmac.compare_digest(
@@ -487,9 +491,17 @@ def api_drive_thumbnail(file_id):
         if not thumb_url:
             return Response(status=404)
 
-        # Proxy the thumbnail image so the browser can display it
+        # Proxy the thumbnail image with service account auth
+        # (Google Drive thumbnailLink URLs require authentication)
         MAX_THUMB_BYTES = 5 * 1024 * 1024  # 5 MB safety cap
-        req = urllib.request.Request(thumb_url)
+        creds = svc._http.credentials
+        if creds.expired or not creds.token:
+            import google.auth.transport.requests
+            creds.refresh(google.auth.transport.requests.Request())
+        req = urllib.request.Request(
+            thumb_url,
+            headers={"Authorization": f"Bearer {creds.token}"},
+        )
         with urllib.request.urlopen(req, timeout=10) as resp:
             data = resp.read(MAX_THUMB_BYTES + 1)
             if len(data) > MAX_THUMB_BYTES:
