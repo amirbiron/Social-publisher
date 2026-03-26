@@ -487,12 +487,10 @@ def api_drive_thumbnail(file_id):
         meta = svc.files().get(fileId=file_id, fields="thumbnailLink,parents").execute()
 
         parents = meta.get("parents", [])
-        if debug:
-            folder_check = {p: _is_folder_within_root(p, DRIVE_FOLDER_ID) for p in parents}
+        folder_check = {p: _is_folder_within_root(p, DRIVE_FOLDER_ID) for p in parents}
+        allowed = any(folder_check.values())
 
-        if not parents or not any(
-            _is_folder_within_root(p, DRIVE_FOLDER_ID) for p in parents
-        ):
+        if not parents or not allowed:
             logger.warning(f"Thumbnail denied: file {file_id} not within root folder")
             if debug:
                 return jsonify({"step": "folder_check", "error": "File not within root folder",
