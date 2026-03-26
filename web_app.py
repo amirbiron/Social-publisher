@@ -535,6 +535,12 @@ def api_drive_thumbnail(file_id):
                                 "meta_keys": list(meta.keys())})
             return Response(status=404)
 
+        # Google's thumbnailLink ends with =s220 (default size).
+        # Replace with a larger size when requested for the lightbox.
+        size = request.args.get("size", "small")
+        if size == "large":
+            thumb_url = re.sub(r'=s\d+$', '=s1200', thumb_url)
+
         if debug:
             return jsonify({"step": "ready", "thumbnailLink": thumb_url[:80] + "...",
                             "will_fetch": True})

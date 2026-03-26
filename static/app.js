@@ -536,7 +536,9 @@ function closeCaptionModal() {
 function openLightbox(src) {
   const lightbox = document.getElementById('image-lightbox');
   const img = document.getElementById('lightbox-img');
-  img.src = src;
+  // Request a larger thumbnail for the lightbox
+  const largeSrc = src.includes('?') ? src + '&size=large' : src + '?size=large';
+  img.src = largeSrc;
   lightbox.classList.add('active');
   document.body.style.overflow = 'hidden';
 }
