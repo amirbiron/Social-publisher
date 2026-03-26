@@ -49,6 +49,7 @@ from google_api import (
 from cloud_storage import upload_to_cloudinary, delete_from_cloudinary
 from media_processor import normalize_media, MediaProcessingError
 from meta_publish import ig_publish_feed, fb_publish_feed
+from notifications import notify_publish_error, notify_partial_success
 
 # ─── Logging ─────────────────────────────────────────────────
 logging.basicConfig(
@@ -241,6 +242,7 @@ def process_row(
                 error_parts.append(f"{net}: {err}")
             error_detail = f"Partial success ({result_str}). Failures: {'; '.join(error_parts)}"
             logger.warning(f"Row {row_id}: PARTIAL — {error_detail}")
+            notify_partial_success(row_id, result_str, "; ".join(error_parts))
             sheets_update_cells(
                 sheet_row_number,
                 {
@@ -277,6 +279,7 @@ def process_row(
                 pass
         logger.error(f"Row {row_id}: ERROR — {error_detail}", exc_info=True)
         _mark_error(header, sheet_row_number, error_detail)
+        notify_publish_error(row_id, error_detail)
 
     return True
 

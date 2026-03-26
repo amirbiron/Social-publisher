@@ -76,3 +76,7 @@ services:
         value: "3"
       - key: PUBLISH_RETRY_DELAY
         value: "5"
+      - key: TELEGRAM_BOT_TOKEN
+        sync: false
+      - key: TELEGRAM_CHAT_ID
+        sync: false

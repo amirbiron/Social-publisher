@@ -13,6 +13,7 @@ import re
 import sys
 import requests as http_requests
 from datetime import datetime, timezone
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from dateutil import parser as dtparser
 from flask import Flask, Response, jsonify, render_template, request
@@ -89,8 +90,8 @@ def _check_auth():
     if not WEB_PANEL_SECRET:
         return  # auth disabled (dev mode)
 
-    # Static assets are public (CSS, JS, images — no sensitive data)
-    if request.path.startswith("/static/"):
+    # Static assets and health check are public
+    if request.path.startswith("/static/") or request.path == "/api/health":
         return
 
     # Accept: Authorization: Bearer <secret>
@@ -614,6 +615,100 @@ def api_drive_files():
         logger.error(f"Error listing Drive files: {e}", exc_info=True)
         return jsonify({"error": str(e)}), 500
 
+
+
+# ═══════════════════════════════════════════════════════════════
+#  API — Health Check (public, no auth)
+# ═══════════════════════════════════════════════════════════════
+
+def _check_google_sheets() -> dict:
+    """בדיקת חיבור ל-Google Sheets."""
+    try:
+        header, _rows = sheets_read_all_rows()
+        if header:
+            return {"status": "ok", "columns": len(header)}
+        return {"status": "error", "error": "Sheet is empty or has no header"}
+    except Exception as e:
+        return {"status": "error", "error": str(e)[:200]}
+
+
+def _check_google_drive() -> dict:
+    """בדיקת חיבור ל-Google Drive."""
+    try:
+        if not DRIVE_FOLDER_ID:
+            return {"status": "error", "error": "GOOGLE_DRIVE_FOLDER_ID not configured"}
+        svc = get_drive_service()
+        meta = svc.files().get(fileId=DRIVE_FOLDER_ID, fields="id,name", supportsAllDrives=True).execute()
+        return {"status": "ok", "folder": meta.get("name", DRIVE_FOLDER_ID)}
+    except Exception as e:
+        return {"status": "error", "error": str(e)[:200]}
+
+
+def _check_cloudinary() -> dict:
+    """בדיקת חיבור ל-Cloudinary (ping via API)."""
+    try:
+        import cloudinary.api
+        result = cloudinary.api.ping()
+        if result.get("status") == "ok":
+            return {"status": "ok"}
+        return {"status": "error", "error": f"Unexpected response: {result}"}
+    except Exception as e:
+        return {"status": "error", "error": str(e)[:200]}
+
+
+def _check_meta_token(token_name: str, token: str) -> dict:
+    """בדיקת תוקף טוקן Meta (debug_token או /me)."""
+    if not token:
+        return {"status": "error", "error": f"{token_name} not configured"}
+    try:
+        meta_api_version = os.environ.get("META_API_VERSION", "v21.0")
+        url = f"https://graph.facebook.com/{meta_api_version}/me"
+        resp = http_requests.get(url, params={"access_token": token}, timeout=10)
+        if resp.ok:
+            data = resp.json()
+            return {"status": "ok", "name": data.get("name", "OK")}
+        error = resp.json().get("error", {})
+        return {"status": "error", "error": error.get("message", resp.text)[:200]}
+    except Exception as e:
+        return {"status": "error", "error": str(e)[:200]}
+
+
+@app.route("/api/health", methods=["GET"])
+def api_health():
+    """
+    בדיקת תקינות כל השירותים החיצוניים.
+    מחזיר סטטוס לכל שירות + סטטוס כללי.
+    לא דורש אימות — מיועד ל-uptime monitoring.
+    """
+    ig_token = os.environ.get("IG_ACCESS_TOKEN", "")
+    fb_token = os.environ.get("FB_PAGE_ACCESS_TOKEN", "")
+
+    checks = {}
+
+    # רץ במקביל לחיסכון בזמן
+    with ThreadPoolExecutor(max_workers=5) as pool:
+        futures = {
+            pool.submit(_check_google_sheets): "google_sheets",
+            pool.submit(_check_google_drive): "google_drive",
+            pool.submit(_check_cloudinary): "cloudinary",
+            pool.submit(_check_meta_token, "IG_ACCESS_TOKEN", ig_token): "instagram",
+            pool.submit(_check_meta_token, "FB_PAGE_ACCESS_TOKEN", fb_token): "facebook",
+        }
+        for future in as_completed(futures):
+            name = futures[future]
+            try:
+                checks[name] = future.result()
+            except Exception as e:
+                checks[name] = {"status": "error", "error": str(e)[:200]}
+
+    all_ok = all(c["status"] == "ok" for c in checks.values())
+    status_code = 200 if all_ok else 503
+
+    return jsonify({
+        "status": "healthy" if all_ok else "unhealthy",
+        "services": checks,
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+    }), status_code
 
 
 # ═══════════════════════════════════════════════════════════════
