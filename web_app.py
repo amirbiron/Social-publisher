@@ -494,8 +494,7 @@ def api_drive_thumbnail(file_id):
         # Proxy the thumbnail image with service account auth
         # (Google Drive thumbnailLink URLs require authentication)
         MAX_THUMB_BYTES = 5 * 1024 * 1024  # 5 MB safety cap
-        from google_api import _get_credentials
-        creds = _get_credentials()
+        creds = svc._http.credentials
         if creds.expired or not creds.token:
             import google.auth.transport.requests
             creds.refresh(google.auth.transport.requests.Request())
