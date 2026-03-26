@@ -508,18 +508,19 @@ def api_drive_thumbnail(file_id):
             stream=True,
         )
 
-        if thumb_resp.status_code != 200:
-            logger.warning(f"Thumbnail fetch failed for {file_id}: HTTP {thumb_resp.status_code}")
+        try:
+            if thumb_resp.status_code != 200:
+                logger.warning(f"Thumbnail fetch failed for {file_id}: HTTP {thumb_resp.status_code}")
+                return Response(status=502)
+
+            data = thumb_resp.raw.read(MAX_THUMB_BYTES + 1, decode_content=True)
+
+            if len(data) > MAX_THUMB_BYTES:
+                return Response(status=413)
+
+            content_type = thumb_resp.headers.get("Content-Type", "image/png")
+        finally:
             thumb_resp.close()
-            return Response(status=502)
-
-        data = thumb_resp.raw.read(MAX_THUMB_BYTES + 1, decode_content=True)
-        thumb_resp.close()
-
-        if len(data) > MAX_THUMB_BYTES:
-            return Response(status=413)
-
-        content_type = thumb_resp.headers.get("Content-Type", "image/png")
 
         # Only proxy image MIME types to prevent serving active content (XSS)
         if not content_type.startswith("image/"):
