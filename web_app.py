@@ -622,6 +622,10 @@ def api_drive_files():
 #  API — Health Check (public, no auth)
 # ═══════════════════════════════════════════════════════════════
 
+# Cooldown: שולחים התראת טלגרם על שירות שנפל לכל היותר פעם ב-30 דקות
+HEALTH_NOTIFY_COOLDOWN_SECONDS = int(os.environ.get("HEALTH_NOTIFY_COOLDOWN_SECONDS", "1800"))
+_health_notify_cooldown: dict[str, datetime] = {}  # {service_name: last_notified_utc}
+
 def _check_google_sheets() -> dict:
     """בדיקת חיבור ל-Google Sheets."""
     try:
@@ -705,11 +709,18 @@ def api_health():
     all_ok = all(c["status"] == "ok" for c in checks.values())
     status_code = 200 if all_ok else 503
 
-    # שליחת התראות טלגרם על שירותים שנפלו
+    # שליחת התראות טלגרם על שירותים שנפלו (עם cooldown למניעת ספאם)
+    now = datetime.now(timezone.utc)
     if not all_ok:
         for name, check in checks.items():
             if check["status"] == "error":
-                notify_health_issue(name, check.get("error", "Unknown"))
+                last_sent = _health_notify_cooldown.get(name)
+                if last_sent is None or (now - last_sent).total_seconds() >= HEALTH_NOTIFY_COOLDOWN_SECONDS:
+                    notify_health_issue(name, check.get("error", "Unknown"))
+                    _health_notify_cooldown[name] = now
+    else:
+        # הכל תקין — מאפסים את ה-cooldown כדי שהתראה הבאה תישלח מיד
+        _health_notify_cooldown.clear()
 
     return jsonify({
         "status": "healthy" if all_ok else "unhealthy",
