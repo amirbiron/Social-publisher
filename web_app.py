@@ -470,7 +470,11 @@ def _is_folder_within_root(folder_id: str, root_id: str, max_depth: int = 10) ->
 @app.route("/api/drive/thumbnail/<file_id>", methods=["GET"])
 def api_drive_thumbnail(file_id):
     """מחזיר תמונה ממוזערת של קובץ מ-Drive (proxy)."""
-    debug = request.args.get("debug") == "1"
+    # Debug mode: only available via FLASK_DEBUG env var (not exposed to regular users)
+    debug = (
+        request.args.get("debug") == "1"
+        and os.environ.get("FLASK_DEBUG", "").lower() == "true"
+    )
     try:
         if not file_id or len(file_id) > 120 or not re.fullmatch(r'[A-Za-z0-9_-]+', file_id):
             if debug:
@@ -487,12 +491,13 @@ def api_drive_thumbnail(file_id):
         meta = svc.files().get(fileId=file_id, fields="thumbnailLink,parents").execute()
 
         parents = meta.get("parents", [])
-        folder_check = {p: _is_folder_within_root(p, DRIVE_FOLDER_ID) for p in parents}
-        allowed = any(folder_check.values())
 
-        if not parents or not allowed:
+        if not parents or not any(
+            _is_folder_within_root(p, DRIVE_FOLDER_ID) for p in parents
+        ):
             logger.warning(f"Thumbnail denied: file {file_id} not within root folder")
             if debug:
+                folder_check = {p: _is_folder_within_root(p, DRIVE_FOLDER_ID) for p in parents}
                 return jsonify({"step": "folder_check", "error": "File not within root folder",
                                 "parents": parents, "root": DRIVE_FOLDER_ID, "checks": folder_check})
             return Response(status=403)
@@ -507,7 +512,7 @@ def api_drive_thumbnail(file_id):
 
         if debug:
             return jsonify({"step": "ready", "thumbnailLink": thumb_url[:80] + "...",
-                            "parents": parents, "will_fetch": True})
+                            "will_fetch": True})
 
         # Fetch thumbnail with service-account auth via requests (thread-safe).
         # svc._http.credentials is auto-refreshed by prior API calls above.
