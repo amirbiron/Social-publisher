@@ -11,6 +11,7 @@ import logging
 import os
 import re
 import sys
+import requests as http_requests
 from datetime import datetime, timezone
 
 from dateutil import parser as dtparser
@@ -492,27 +493,33 @@ def api_drive_thumbnail(file_id):
             logger.debug(f"No thumbnailLink for file {file_id}")
             return Response(status=404)
 
-        # Fetch thumbnail via the Google API client's authenticated HTTP.
-        # Set a timeout to avoid blocking a worker indefinitely, and
-        # limit read size to avoid memory exhaustion from large responses.
+        # Fetch thumbnail with service-account auth via requests (thread-safe).
+        # svc._http.credentials is auto-refreshed by prior API calls above.
         MAX_THUMB_BYTES = 5 * 1024 * 1024  # 5 MB safety cap
-        prev_timeout = svc._http.http.timeout
-        svc._http.http.timeout = 10
-        try:
-            http_resp, data = svc._http.request(thumb_url)
-        finally:
-            svc._http.http.timeout = prev_timeout
+        creds = svc._http.credentials
+        if not creds.token:
+            import google.auth.transport.requests as gauth_transport
+            creds.refresh(gauth_transport.Request())
 
-        status_code = int(http_resp.status)
+        thumb_resp = http_requests.get(
+            thumb_url,
+            headers={"Authorization": f"Bearer {creds.token}"},
+            timeout=10,
+            stream=True,
+        )
 
-        if status_code != 200:
-            logger.warning(f"Thumbnail fetch failed for {file_id}: HTTP {status_code}")
+        if thumb_resp.status_code != 200:
+            logger.warning(f"Thumbnail fetch failed for {file_id}: HTTP {thumb_resp.status_code}")
+            thumb_resp.close()
             return Response(status=502)
+
+        data = thumb_resp.raw.read(MAX_THUMB_BYTES + 1)
+        thumb_resp.close()
 
         if len(data) > MAX_THUMB_BYTES:
             return Response(status=413)
 
-        content_type = http_resp.get("content-type", "image/png")
+        content_type = thumb_resp.headers.get("Content-Type", "image/png")
 
         # Only proxy image MIME types to prevent serving active content (XSS)
         if not content_type.startswith("image/"):
