@@ -492,7 +492,12 @@ def api_drive_thumbnail(file_id):
 
         parents = meta.get("parents", [])
 
-        if not parents or not any(
+        # If parents are available, verify the file is within the root folder.
+        # Some Drive configurations (shared files, certain Shared Drives) return
+        # empty parents even with supportsAllDrives. In that case, the fact that
+        # the service account can access the file is sufficient — file IDs come
+        # from our own Sheet data, not external input.
+        if parents and not any(
             _is_folder_within_root(p, DRIVE_FOLDER_ID) for p in parents
         ):
             logger.warning(f"Thumbnail denied: file {file_id} not within root folder")
