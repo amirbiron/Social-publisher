@@ -8,6 +8,15 @@ from unittest.mock import patch, MagicMock
 import pytest
 
 
+@pytest.fixture(autouse=True)
+def _clear_health_state():
+    """Clear health check cache and cooldown before each test."""
+    import web_app
+    web_app._health_cache.clear()
+    web_app._health_notify_cooldown.clear()
+    yield
+
+
 @pytest.fixture
 def client():
     """Flask test client."""
@@ -35,8 +44,6 @@ class TestHealthEndpoint:
     @patch("web_app._check_google_drive", return_value={"status": "ok", "folder": "Media"})
     @patch("web_app._check_google_sheets", return_value={"status": "ok", "columns": 11})
     def test_one_unhealthy_returns_503(self, mock_sheets, mock_drive, mock_cloud, mock_meta, mock_notify, client):
-        import web_app
-        web_app._health_notify_cooldown.clear()
         resp = client.get("/api/health")
         assert resp.status_code == 503
         data = json.loads(resp.data)
@@ -50,13 +57,13 @@ class TestHealthEndpoint:
     @patch("web_app._check_google_drive", return_value={"status": "ok", "folder": "Media"})
     @patch("web_app._check_google_sheets", return_value={"status": "ok", "columns": 11})
     def test_cooldown_prevents_duplicate_notifications(self, mock_sheets, mock_drive, mock_cloud, mock_meta, mock_notify, client):
-        """Repeated health checks should not spam Telegram."""
+        """Repeated health checks should not spam Telegram (even if cache expires)."""
         import web_app
-        web_app._health_notify_cooldown.clear()
         # First call — should notify
         client.get("/api/health")
         assert mock_notify.call_count == 1
-        # Second call — within cooldown, should NOT notify again
+        # Second call with expired cache — cooldown prevents duplicate notification
+        web_app._health_cache.clear()
         client.get("/api/health")
         assert mock_notify.call_count == 1
 
@@ -68,18 +75,31 @@ class TestHealthEndpoint:
     def test_cooldown_resets_after_recovery(self, mock_sheets, mock_drive, mock_cloud, mock_meta, mock_notify, client):
         """After all services recover, cooldown resets so next failure notifies immediately."""
         import web_app
-        web_app._health_notify_cooldown.clear()
         # Unhealthy — notifies
         client.get("/api/health")
         assert mock_notify.call_count == 1
-        # Simulate recovery
+        # Simulate recovery (clear cache so new checks run)
         mock_cloud.return_value = {"status": "ok"}
+        web_app._health_cache.clear()
         client.get("/api/health")
         assert web_app._health_notify_cooldown == {}
         # Break again — should notify immediately (cooldown was cleared)
         mock_cloud.return_value = {"status": "error", "error": "timeout"}
+        web_app._health_cache.clear()
         client.get("/api/health")
         assert mock_notify.call_count == 2
+
+    @patch("web_app._check_meta_token", return_value={"status": "ok", "name": "Page"})
+    @patch("web_app._check_cloudinary", return_value={"status": "ok"})
+    @patch("web_app._check_google_drive", return_value={"status": "ok", "folder": "Media"})
+    @patch("web_app._check_google_sheets", return_value={"status": "ok", "columns": 11})
+    def test_cache_prevents_repeated_api_calls(self, mock_sheets, mock_drive, mock_cloud, mock_meta, client):
+        """Repeated requests within TTL should return cached result without new API calls."""
+        client.get("/api/health")
+        assert mock_sheets.call_count == 1
+        # Second request — should be cached
+        client.get("/api/health")
+        assert mock_sheets.call_count == 1  # NOT called again
 
     def test_no_auth_required(self, client):
         """Health check should not require authentication."""

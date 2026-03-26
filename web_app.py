@@ -627,6 +627,10 @@ def api_drive_files():
 HEALTH_NOTIFY_COOLDOWN_SECONDS = int(os.environ.get("HEALTH_NOTIFY_COOLDOWN_SECONDS", "1800"))
 _health_notify_cooldown: dict[str, datetime] = {}  # {service_name: last_notified_utc}
 
+# Cache: תוצאת health check נשמרת למשך 60 שניות למניעת ניצול API quotas
+HEALTH_CACHE_TTL_SECONDS = int(os.environ.get("HEALTH_CACHE_TTL_SECONDS", "60"))
+_health_cache: dict = {}  # {"result": ..., "status_code": ..., "timestamp": datetime}
+
 def _check_google_sheets() -> dict:
     """בדיקת חיבור ל-Google Sheets — קורא רק את שורת ה-header."""
     try:
@@ -685,7 +689,15 @@ def api_health():
     בדיקת תקינות כל השירותים החיצוניים.
     מחזיר סטטוס לכל שירות + סטטוס כללי.
     לא דורש אימות — מיועד ל-uptime monitoring.
+    תוצאות נשמרות ב-cache למשך 60 שניות למניעת ניצול API quotas.
     """
+    # החזרת תוצאה מה-cache אם עדיין תקפה
+    now = datetime.now(timezone.utc)
+    if _health_cache:
+        age = (now - _health_cache["timestamp"]).total_seconds()
+        if age < HEALTH_CACHE_TTL_SECONDS:
+            return jsonify(_health_cache["result"]), _health_cache["status_code"]
+
     ig_token = os.environ.get("IG_ACCESS_TOKEN", "")
     fb_token = os.environ.get("FB_PAGE_ACCESS_TOKEN", "")
 
@@ -723,11 +735,16 @@ def api_health():
         # הכל תקין — מאפסים את ה-cooldown כדי שהתראה הבאה תישלח מיד
         _health_notify_cooldown.clear()
 
-    return jsonify({
+    result = {
         "status": "healthy" if all_ok else "unhealthy",
         "services": checks,
-        "timestamp": datetime.now(timezone.utc).isoformat(),
-    }), status_code
+        "timestamp": now.isoformat(),
+    }
+
+    # שמירה ב-cache
+    _health_cache.update({"result": result, "status_code": status_code, "timestamp": now})
+
+    return jsonify(result), status_code
 
 
 # ═══════════════════════════════════════════════════════════════
