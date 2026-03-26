@@ -1096,7 +1096,7 @@ async function pollStatus() {
 }
 
 /**
- * Add a highlight animation to rows/cards whose post ID changed.
+ * Blink the status badge 3 times on rows/cards whose status changed.
  */
 function highlightChangedPosts(changedIds) {
   // Desktop table rows — first cell contains the post ID
@@ -1104,9 +1104,10 @@ function highlightChangedPosts(changedIds) {
     const firstCell = tr.querySelector('td');
     if (firstCell && changedIds.has(firstCell.textContent.trim())) {
       tr.classList.add('status-changed');
-      tr.addEventListener('animationend', (e) => {
-        if (e.target === tr) tr.classList.remove('status-changed');
-      }, { once: true });
+      const badge = tr.querySelector('.badge');
+      if (badge) {
+        badge.addEventListener('animationend', () => tr.classList.remove('status-changed'), { once: true });
+      }
     }
   });
 
@@ -1117,9 +1118,10 @@ function highlightChangedPosts(changedIds) {
       const idText = idSpan.textContent.replace('#', '').trim();
       if (changedIds.has(idText)) {
         card.classList.add('status-changed');
-        card.addEventListener('animationend', (e) => {
-          if (e.target === card) card.classList.remove('status-changed');
-        }, { once: true });
+        const badge = card.querySelector('.badge');
+        if (badge) {
+          badge.addEventListener('animationend', () => card.classList.remove('status-changed'), { once: true });
+        }
       }
     }
   });
