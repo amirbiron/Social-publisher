@@ -11,7 +11,7 @@ import logging
 import os
 import re
 import sys
-import urllib.request
+import requests as http_requests
 from datetime import datetime, timezone
 
 from dateutil import parser as dtparser
@@ -485,31 +485,46 @@ def api_drive_thumbnail(file_id):
         if not parents or not any(
             _is_folder_within_root(p, DRIVE_FOLDER_ID) for p in parents
         ):
+            logger.warning(f"Thumbnail denied: file {file_id} not within root folder")
             return Response(status=403)
 
         thumb_url = meta.get("thumbnailLink")
         if not thumb_url:
+            logger.debug(f"No thumbnailLink for file {file_id}")
             return Response(status=404)
 
-        # Proxy the thumbnail image with service account auth
-        # (Google Drive thumbnailLink URLs require authentication)
+        # Fetch thumbnail with service-account auth via requests (thread-safe).
+        # svc._http.credentials is auto-refreshed by prior API calls above.
         MAX_THUMB_BYTES = 5 * 1024 * 1024  # 5 MB safety cap
         creds = svc._http.credentials
-        if creds.expired or not creds.token:
-            import google.auth.transport.requests
-            creds.refresh(google.auth.transport.requests.Request())
-        req = urllib.request.Request(
+        if not creds.token:
+            import google.auth.transport.requests as gauth_transport
+            creds.refresh(gauth_transport.Request())
+
+        thumb_resp = http_requests.get(
             thumb_url,
             headers={"Authorization": f"Bearer {creds.token}"},
+            timeout=10,
+            stream=True,
         )
-        with urllib.request.urlopen(req, timeout=10) as resp:
-            data = resp.read(MAX_THUMB_BYTES + 1)
+
+        try:
+            if thumb_resp.status_code != 200:
+                logger.warning(f"Thumbnail fetch failed for {file_id}: HTTP {thumb_resp.status_code}")
+                return Response(status=502)
+
+            data = thumb_resp.raw.read(MAX_THUMB_BYTES + 1, decode_content=True)
+
             if len(data) > MAX_THUMB_BYTES:
                 return Response(status=413)
-            content_type = resp.headers.get("Content-Type", "image/png")
+
+            content_type = thumb_resp.headers.get("Content-Type", "image/png")
+        finally:
+            thumb_resp.close()
 
         # Only proxy image MIME types to prevent serving active content (XSS)
         if not content_type.startswith("image/"):
+            logger.warning(f"Thumbnail for {file_id} returned non-image type: {content_type}")
             return Response(status=502)
 
         return Response(
@@ -518,7 +533,8 @@ def api_drive_thumbnail(file_id):
             headers={"Cache-Control": "public, max-age=3600"},
         )
 
-    except Exception:
+    except Exception as e:
+        logger.error(f"Thumbnail error for {file_id}: {e}", exc_info=True)
         return Response(status=404)
 
 
