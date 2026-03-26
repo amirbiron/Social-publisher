@@ -48,16 +48,18 @@ async function loadConfig() {
 //  Posts — CRUD
 // ═══════════════════════════════════════════════════════════════
 
-async function loadPosts() {
-  showElement('posts-loading');
-  hideElement('posts-empty');
-  hideElement('posts-table-wrapper');
+async function loadPosts(silent = false) {
+  if (!silent) {
+    showElement('posts-loading');
+    hideElement('posts-empty');
+    hideElement('posts-table-wrapper');
 
-  // Hide mobile cards while loading to prevent stale data showing
-  const cardsEl = document.getElementById('posts-cards');
-  if (cardsEl) {
-    cardsEl.classList.add('hidden');
-    cardsEl.innerHTML = '';
+    // Hide mobile cards while loading to prevent stale data showing
+    const cardsEl = document.getElementById('posts-cards');
+    if (cardsEl) {
+      cardsEl.classList.add('hidden');
+      cardsEl.innerHTML = '';
+    }
   }
 
   try {
@@ -1102,8 +1104,8 @@ async function pollStatus() {
     }
 
     if (changedIds.size > 0) {
-      // Full reload to get updated data (also refreshes lastStatusMap)
-      await loadPosts();
+      // Silent reload — no spinner/flash, just update data in place
+      await loadPosts(true);
 
       // Highlight changed rows/cards
       highlightChangedPosts(changedIds);
