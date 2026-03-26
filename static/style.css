@@ -636,6 +636,12 @@ body {
   object-fit: cover;
   flex-shrink: 0;
   background: var(--color-bg-hover);
+  cursor: pointer;
+  transition: opacity var(--transition-fast);
+}
+
+.file-thumbnail:hover {
+  opacity: 0.75;
 }
 
 .file-thumbnail-fallback {
@@ -1206,6 +1212,31 @@ body {
   50% { opacity: 0.5; }
 }
 
+/* ─── Image Lightbox ──────────────────────────────────────── */
+.lightbox {
+  display: none;
+  position: fixed;
+  inset: 0;
+  z-index: var(--z-modal);
+  background: oklch(0 0 0 / 0.85);
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+}
+
+.lightbox.active {
+  display: flex;
+}
+
+.lightbox img {
+  max-width: 90vw;
+  max-height: 85vh;
+  border-radius: var(--radius-lg);
+  object-fit: contain;
+  box-shadow: 0 8px 32px oklch(0 0 0 / 0.5);
+  cursor: default;
+}
+
 @keyframes badgeBlink {
   0%, 100% { opacity: 1; }
   50% { opacity: 0.2; }
@@ -1521,6 +1552,7 @@ tr.status-changed .badge {
   height: 40px;
   border-radius: var(--radius-sm);
   object-fit: cover;
+  cursor: pointer;
 }
 
 .post-card-actions {
