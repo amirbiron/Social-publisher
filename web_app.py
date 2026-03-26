@@ -467,6 +467,21 @@ def _is_folder_within_root(folder_id: str, root_id: str, max_depth: int = 10) ->
     return False
 
 
+def _is_known_drive_file(file_id: str) -> bool:
+    """Check if file_id exists in the Google Sheet's drive_file_id column."""
+    try:
+        header, rows = sheets_read_all_rows()
+        if not header:
+            return False
+        idx = header.index(COL_DRIVE_FILE_ID)
+        return any(
+            idx < len(row) and row[idx] == file_id
+            for row in rows
+        )
+    except (ValueError, Exception):
+        return False
+
+
 @app.route("/api/drive/thumbnail/<file_id>", methods=["GET"])
 def api_drive_thumbnail(file_id):
     """מחזיר תמונה ממוזערת של קובץ מ-Drive (proxy)."""
@@ -492,20 +507,25 @@ def api_drive_thumbnail(file_id):
 
         parents = meta.get("parents", [])
 
-        # If parents are available, verify the file is within the root folder.
-        # Some Drive configurations (shared files, certain Shared Drives) return
-        # empty parents even with supportsAllDrives. In that case, the fact that
-        # the service account can access the file is sufficient — file IDs come
-        # from our own Sheet data, not external input.
-        if parents and not any(
-            _is_folder_within_root(p, DRIVE_FOLDER_ID) for p in parents
-        ):
-            logger.warning(f"Thumbnail denied: file {file_id} not within root folder")
-            if debug:
-                folder_check = {p: _is_folder_within_root(p, DRIVE_FOLDER_ID) for p in parents}
-                return jsonify({"step": "folder_check", "error": "File not within root folder",
-                                "parents": parents, "root": DRIVE_FOLDER_ID, "checks": folder_check})
-            return Response(status=403)
+        # Verify file belongs to the configured root folder tree.
+        # Some Drive configs return empty parents — in that case, fall back
+        # to checking if the file_id exists in our Google Sheet (since
+        # file_id is a user-controlled URL parameter, not just Sheet data).
+        if parents:
+            if not any(_is_folder_within_root(p, DRIVE_FOLDER_ID) for p in parents):
+                logger.warning(f"Thumbnail denied: file {file_id} not within root folder")
+                if debug:
+                    folder_check = {p: _is_folder_within_root(p, DRIVE_FOLDER_ID) for p in parents}
+                    return jsonify({"step": "folder_check", "error": "File not within root folder",
+                                    "parents": parents, "root": DRIVE_FOLDER_ID, "checks": folder_check})
+                return Response(status=403)
+        else:
+            if not _is_known_drive_file(file_id):
+                logger.warning(f"Thumbnail denied: file {file_id} has no parents and is not in Sheet")
+                if debug:
+                    return jsonify({"step": "folder_check", "error": "File not in Sheet and no parents to verify",
+                                    "parents": [], "root": DRIVE_FOLDER_ID})
+                return Response(status=403)
 
         thumb_url = meta.get("thumbnailLink")
         if not thumb_url:
