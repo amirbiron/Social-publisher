@@ -513,7 +513,7 @@ def api_drive_thumbnail(file_id):
             thumb_resp.close()
             return Response(status=502)
 
-        data = thumb_resp.raw.read(MAX_THUMB_BYTES + 1)
+        data = thumb_resp.raw.read(MAX_THUMB_BYTES + 1, decode_content=True)
         thumb_resp.close()
 
         if len(data) > MAX_THUMB_BYTES:
