@@ -209,7 +209,7 @@ function renderPosts() {
     const thumbSrc = `/api/drive/thumbnail/${encodeURIComponent(post.drive_file_id)}`;
     const fileCell = post.drive_file_id
       ? `<div class="cell-file-preview">
-           <img class="file-thumbnail" src="${thumbSrc}" alt="" loading="lazy" onclick="openLightbox('${thumbSrc}')" onerror="this.style.display='none'; this.nextElementSibling.style.display='flex'">
+           <img class="file-thumbnail" src="${thumbSrc}" alt="" loading="lazy" onclick="openLightbox(this.src)" onerror="this.style.display='none'; this.nextElementSibling.style.display='flex'">
            <span class="file-thumbnail-fallback" style="display:none">&#128247;</span>
            <span class="file-name-text" title="${escapeHtml(post.drive_file_id)}">${truncate(post.drive_file_id, 14)}</span>
          </div>`
