@@ -171,6 +171,9 @@ def process_row(
 
         # ── פירוק drive_file_id — תמיכה בקבצים מרובים (קרוסלה) ──
         drive_file_ids = [fid.strip() for fid in drive_file_id.split(",") if fid.strip()]
+        if not drive_file_ids:
+            _mark_error(header, sheet_row_number, "Missing drive_file_id")
+            return True
         is_carousel = len(drive_file_ids) > 1
 
         if is_carousel and post_type == POST_TYPE_REELS:
