@@ -206,9 +206,10 @@ function renderPosts() {
     const captionFb = truncate(post.caption_fb, 40);
 
     // Thumbnail + file name
+    const thumbSrc = `/api/drive/thumbnail/${encodeURIComponent(post.drive_file_id)}`;
     const fileCell = post.drive_file_id
       ? `<div class="cell-file-preview">
-           <img class="file-thumbnail" src="/api/drive/thumbnail/${encodeURIComponent(post.drive_file_id)}" alt="" loading="lazy" onerror="this.style.display='none'; this.nextElementSibling.style.display='flex'">
+           <img class="file-thumbnail" src="${thumbSrc}" alt="" loading="lazy" onclick="openLightbox('${thumbSrc}')" onerror="this.style.display='none'; this.nextElementSibling.style.display='flex'">
            <span class="file-thumbnail-fallback" style="display:none">&#128247;</span>
            <span class="file-name-text" title="${escapeHtml(post.drive_file_id)}">${truncate(post.drive_file_id, 14)}</span>
          </div>`
@@ -240,7 +241,7 @@ function renderPosts() {
            <div class="post-card-row">
              <span class="post-card-label">קובץ</span>
              <div class="post-card-file">
-               <img src="/api/drive/thumbnail/${encodeURIComponent(post.drive_file_id)}" alt="" loading="lazy" onerror="this.style.display='none'">
+               <img src="/api/drive/thumbnail/${encodeURIComponent(post.drive_file_id)}" alt="" loading="lazy" onclick="openLightbox(this.src)" onerror="this.style.display='none'">
                <span>${truncate(post.drive_file_id, 20)}</span>
              </div>
            </div>`
@@ -529,6 +530,22 @@ function openCaptionModal(title, text) {
 
 function closeCaptionModal() {
   closeModal('caption-modal');
+}
+
+// ─── Image Lightbox ──────────────────────────────────────────
+function openLightbox(src) {
+  const lightbox = document.getElementById('image-lightbox');
+  const img = document.getElementById('lightbox-img');
+  img.src = src;
+  lightbox.classList.add('active');
+  document.body.style.overflow = 'hidden';
+}
+
+function closeLightbox() {
+  const lightbox = document.getElementById('image-lightbox');
+  lightbox.classList.remove('active');
+  document.getElementById('lightbox-img').src = '';
+  document.body.style.overflow = '';
 }
 
 async function copyCaptionText() {
@@ -876,6 +893,12 @@ document.addEventListener('click', (e) => {
 // Close modal on Escape key
 document.addEventListener('keydown', (e) => {
   if (e.key === 'Escape') {
+    // Close lightbox if open
+    const lightbox = document.getElementById('image-lightbox');
+    if (lightbox && lightbox.classList.contains('active')) {
+      closeLightbox();
+      return;
+    }
     document.querySelectorAll('.modal-backdrop.active').forEach(el => {
       el.classList.remove('active');
     });
