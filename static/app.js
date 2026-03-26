@@ -212,12 +212,10 @@ function renderPosts() {
     const fileIds = (post.drive_file_id || '').split(',').map(s => s.trim()).filter(Boolean);
     const firstFileId = fileIds[0] || '';
     const thumbSrc = firstFileId ? `/api/drive/thumbnail/${encodeURIComponent(firstFileId)}` : '';
-    const multiLabel = fileIds.length > 1 ? `<span class="file-count-badge">${fileIds.length}</span>` : '';
     const fileCell = firstFileId
       ? `<div class="cell-file-preview">
            <img class="file-thumbnail" src="${thumbSrc}" alt="" loading="lazy" onclick="openLightbox(this.src)" onerror="this.style.display='none'; this.nextElementSibling.style.display='flex'">
            <span class="file-thumbnail-fallback" style="display:none">&#128247;</span>
-           ${multiLabel}
            <span class="file-name-text" title="${escapeHtml(post.drive_file_id)}">${fileIds.length > 1 ? fileIds.length + ' קבצים' : truncate(firstFileId, 14)}</span>
          </div>`
       : '<span style="color:var(--color-text-muted)">-</span>';
@@ -693,14 +691,25 @@ function renderDriveBreadcrumb() {
   }).join('');
 }
 
+function _isMultiSelectAllowed() {
+  const network = document.getElementById('form-network').value;
+  return network === 'IG';
+}
+
 function selectDriveFile(el, fileId, fileName) {
-  // Toggle multi-select: click adds/removes from selection
+  const multiAllowed = _isMultiSelectAllowed();
+
   const idx = selectedDriveFiles.findIndex(f => f.id === fileId);
   if (idx !== -1) {
     // Deselect
     selectedDriveFiles.splice(idx, 1);
     el.classList.remove('selected');
   } else {
+    if (!multiAllowed && selectedDriveFiles.length >= 1) {
+      // FB only — single select: replace previous selection
+      document.querySelectorAll('.drive-file.selected').forEach(e => e.classList.remove('selected'));
+      selectedDriveFiles = [];
+    }
     if (selectedDriveFiles.length >= 10) {
       showToast('ניתן לבחור עד 10 קבצים לקרוסלה', 'error');
       return;

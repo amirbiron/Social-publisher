@@ -48,7 +48,7 @@ from google_api import (
 )
 from cloud_storage import upload_to_cloudinary, delete_from_cloudinary
 from media_processor import normalize_media, MediaProcessingError
-from meta_publish import ig_publish_feed, fb_publish_feed, ig_publish_carousel, fb_publish_carousel
+from meta_publish import ig_publish_feed, fb_publish_feed, ig_publish_carousel
 from notifications import notify_publish_error, notify_partial_success
 
 # ─── Logging ─────────────────────────────────────────────────
@@ -249,10 +249,11 @@ def process_row(
             else:
                 caption = caption_fb or caption_ig
                 if is_carousel:
-                    logger.info(f"Row {row_id}: Publishing carousel to Facebook ({len(cloud_urls)} items)...")
+                    # FB קרוסלה דורשת pages_manage_posts approved — fallback לתמונה ראשונה
+                    logger.info(f"Row {row_id}: FB carousel not supported — publishing first item only...")
                     try:
                         results[NETWORK_FB] = _publish_with_retry(
-                            fb_publish_carousel, cloud_urls, caption, mime_types,
+                            fb_publish_feed, cloud_urls[0], caption, mime_types[0], post_type,
                             row_id=row_id, network_name="FB",
                         )
                     except Exception as e:
