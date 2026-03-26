@@ -691,14 +691,25 @@ function renderDriveBreadcrumb() {
   }).join('');
 }
 
+function _isMultiSelectAllowed() {
+  const network = document.getElementById('form-network').value;
+  return network !== 'FB';
+}
+
 function selectDriveFile(el, fileId, fileName) {
-  // Toggle multi-select: click adds/removes from selection
+  const multiAllowed = _isMultiSelectAllowed();
+
   const idx = selectedDriveFiles.findIndex(f => f.id === fileId);
   if (idx !== -1) {
     // Deselect
     selectedDriveFiles.splice(idx, 1);
     el.classList.remove('selected');
   } else {
+    if (!multiAllowed && selectedDriveFiles.length >= 1) {
+      // FB only — single select: replace previous selection
+      document.querySelectorAll('.drive-file.selected').forEach(e => e.classList.remove('selected'));
+      selectedDriveFiles = [];
+    }
     if (selectedDriveFiles.length >= 10) {
       showToast('ניתן לבחור עד 10 קבצים לקרוסלה', 'error');
       return;
