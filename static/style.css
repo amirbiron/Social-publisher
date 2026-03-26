@@ -728,8 +728,10 @@ body {
 
 .posts-table .cell-actions {
   white-space: nowrap;
-  display: flex;
-  gap: var(--space-xs);
+}
+
+.posts-table .cell-actions .btn {
+  margin-inline-end: var(--space-xs);
 }
 
 /* ─── Modal ─────────────────────────────────────────────────── */
