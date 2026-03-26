@@ -43,6 +43,7 @@ from config_constants import (
 )
 from google_api import (
     sheets_read_all_rows,
+    sheets_read_row,
     sheets_update_cells,
     sheets_append_row,
     sheets_delete_row,
@@ -627,9 +628,9 @@ HEALTH_NOTIFY_COOLDOWN_SECONDS = int(os.environ.get("HEALTH_NOTIFY_COOLDOWN_SECO
 _health_notify_cooldown: dict[str, datetime] = {}  # {service_name: last_notified_utc}
 
 def _check_google_sheets() -> dict:
-    """בדיקת חיבור ל-Google Sheets."""
+    """בדיקת חיבור ל-Google Sheets — קורא רק את שורת ה-header."""
     try:
-        header, _rows = sheets_read_all_rows()
+        header = sheets_read_row(1)
         if header:
             return {"status": "ok", "columns": len(header)}
         return {"status": "error", "error": "Sheet is empty or has no header"}

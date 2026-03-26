@@ -278,8 +278,11 @@ def process_row(
             except Exception:
                 pass
         logger.error(f"Row {row_id}: ERROR — {error_detail}", exc_info=True)
-        _mark_error(header, sheet_row_number, error_detail)
         notify_publish_error(row_id, error_detail)
+        try:
+            _mark_error(header, sheet_row_number, error_detail)
+        except Exception as mark_err:
+            logger.error(f"Row {row_id}: Failed to mark error in sheet: {mark_err}")
 
     return True
 

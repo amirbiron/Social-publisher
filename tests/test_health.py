@@ -93,20 +93,21 @@ class TestHealthEndpoint:
 
 
 class TestCheckGoogleSheets:
-    @patch("web_app.sheets_read_all_rows", return_value=(["id", "status"], [["1", "READY"]]))
+    @patch("web_app.sheets_read_row", return_value=["id", "status"])
     def test_ok(self, mock_read):
         from web_app import _check_google_sheets
         result = _check_google_sheets()
         assert result["status"] == "ok"
         assert result["columns"] == 2
+        mock_read.assert_called_once_with(1)
 
-    @patch("web_app.sheets_read_all_rows", return_value=([], []))
+    @patch("web_app.sheets_read_row", return_value=[])
     def test_empty_sheet(self, mock_read):
         from web_app import _check_google_sheets
         result = _check_google_sheets()
         assert result["status"] == "error"
 
-    @patch("web_app.sheets_read_all_rows", side_effect=Exception("API error"))
+    @patch("web_app.sheets_read_row", side_effect=Exception("API error"))
     def test_exception(self, mock_read):
         from web_app import _check_google_sheets
         result = _check_google_sheets()
