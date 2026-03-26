@@ -693,7 +693,7 @@ function renderDriveBreadcrumb() {
 
 function _isMultiSelectAllowed() {
   const network = document.getElementById('form-network').value;
-  return network !== 'FB';
+  return network === 'IG';
 }
 
 function selectDriveFile(el, fileId, fileName) {
