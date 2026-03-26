@@ -466,6 +466,59 @@ class TestProcessRowBothNetworks:
 
 
 # ═══════════════════════════════════════════════════════════════
+#  Carousel (multiple drive_file_ids)
+# ═══════════════════════════════════════════════════════════════
+
+class TestProcessRowCarousel:
+    """process_row with comma-separated drive_file_ids → carousel publishing."""
+
+    @patch("main.notify_publish_error")
+    @patch("main.sheets_update_cells")
+    @patch("main.sheets_read_row")
+    def test_carousel_reels_rejected(self, mock_read_row, mock_update, mock_notify):
+        """REELS + multiple files → error."""
+        mock_read_row.return_value = _make_row(status=STATUS_IN_PROGRESS)
+        row = _make_row(network="IG", post_type="REELS", drive_id="a,b", status=STATUS_IN_PROGRESS)
+
+        process_row(row, HEADER, 2)
+
+        # Should mark error
+        error_call = mock_update.call_args[0][1]
+        assert error_call["status"] == STATUS_ERROR
+        assert "Carousel not supported for REELS" in error_call["error"]
+
+    @patch("main.notify_publish_error")
+    @patch("main.ig_publish_carousel", return_value="ig_car_123")
+    @patch("main.upload_to_cloudinary", side_effect=["https://cloud/1.jpg", "https://cloud/2.jpg"])
+    @patch("main.normalize_media", side_effect=[
+        (b"img1", "image/jpeg", "1.jpg"),
+        (b"img2", "image/jpeg", "2.jpg"),
+    ])
+    @patch("main.drive_download_with_metadata", side_effect=[
+        (b"raw1", {"mimeType": "image/jpeg", "name": "1.jpg"}),
+        (b"raw2", {"mimeType": "image/jpeg", "name": "2.jpg"}),
+    ])
+    @patch("main.sheets_update_cells")
+    @patch("main.sheets_read_row")
+    def test_ig_carousel_success(self, mock_read_row, mock_update, mock_drive,
+                                  mock_normalize, mock_cloud, mock_ig_car, mock_notify):
+        mock_read_row.return_value = _make_row(status=STATUS_IN_PROGRESS)
+        row = _make_row(network="IG", post_type="FEED", drive_id="fileA,fileB", status=STATUS_IN_PROGRESS)
+
+        process_row(row, HEADER, 2)
+
+        # ig_publish_carousel called with 2 URLs
+        mock_ig_car.assert_called_once()
+        call_urls = mock_ig_car.call_args[0][0]
+        assert call_urls == ["https://cloud/1.jpg", "https://cloud/2.jpg"]
+
+        # Sheet updated with POSTED and comma-separated cloudinary URLs
+        update_call = mock_update.call_args_list[-1][0][1]
+        assert update_call["status"] == STATUS_POSTED
+        assert "https://cloud/1.jpg,https://cloud/2.jpg" == update_call["cloudinary_url"]
+
+
+# ═══════════════════════════════════════════════════════════════
 #  _publish_with_retry
 # ═══════════════════════════════════════════════════════════════
 

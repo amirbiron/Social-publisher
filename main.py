@@ -48,7 +48,7 @@ from google_api import (
 )
 from cloud_storage import upload_to_cloudinary, delete_from_cloudinary
 from media_processor import normalize_media, MediaProcessingError
-from meta_publish import ig_publish_feed, fb_publish_feed
+from meta_publish import ig_publish_feed, fb_publish_feed, ig_publish_carousel, fb_publish_carousel
 from notifications import notify_publish_error, notify_partial_success
 
 # ─── Logging ─────────────────────────────────────────────────
@@ -168,33 +168,51 @@ def process_row(
         if network not in valid_networks:
             _mark_error(header, sheet_row_number, f"Unknown network: {network}")
             return True
-        # ── שלב 2: הורדה מ-Drive + זיהוי סוג קובץ ──
-        logger.info(f"Row {row_id}: Downloading from Drive ({drive_file_id})")
-        file_bytes, metadata = drive_download_with_metadata(drive_file_id)
-        mime_type = metadata.get("mimeType", "image/jpeg")
-        file_name = metadata.get("name", "unknown")
 
-        logger.info(
-            f"Row {row_id}: File '{file_name}' | MIME: {mime_type} | "
-            f"Size: {len(file_bytes)} bytes"
-        )
+        # ── פירוק drive_file_id — תמיכה בקבצים מרובים (קרוסלה) ──
+        drive_file_ids = [fid.strip() for fid in drive_file_id.split(",") if fid.strip()]
+        is_carousel = len(drive_file_ids) > 1
 
-        # ── שלב 2.5: נרמול מדיה ──
-        logger.info(f"Row {row_id}: Normalizing media...")
-        file_bytes, mime_type, file_name = normalize_media(
-            file_bytes, mime_type, file_name, post_type
-        )
-        logger.info(
-            f"Row {row_id}: Normalized → {file_name} | "
-            f"MIME: {mime_type} | Size: {len(file_bytes)} bytes"
-        )
+        if is_carousel and post_type == POST_TYPE_REELS:
+            _mark_error(header, sheet_row_number, "Carousel not supported for REELS — use FEED")
+            return True
 
-        # ── שלב 3: העלאה ל-Cloudinary ──
-        logger.info(f"Row {row_id}: Uploading to Cloudinary...")
-        cloud_url = upload_to_cloudinary(file_bytes, mime_type, file_name)
+        if is_carousel and len(drive_file_ids) > 10:
+            _mark_error(header, sheet_row_number, f"Carousel supports 2-10 items, got {len(drive_file_ids)}")
+            return True
+
+        # ── שלב 2: הורדה מ-Drive + נרמול + העלאה לכל קובץ ──
+        cloud_urls = []
+        mime_types = []
+
+        for idx, fid in enumerate(drive_file_ids):
+            file_label = f"{idx+1}/{len(drive_file_ids)}" if is_carousel else ""
+            logger.info(f"Row {row_id}: Downloading from Drive {file_label} ({fid})")
+            file_bytes, metadata = drive_download_with_metadata(fid)
+            mime_type = metadata.get("mimeType", "image/jpeg")
+            file_name = metadata.get("name", "unknown")
+
+            logger.info(
+                f"Row {row_id}: File {file_label} '{file_name}' | MIME: {mime_type} | "
+                f"Size: {len(file_bytes)} bytes"
+            )
+
+            # נרמול מדיה
+            logger.info(f"Row {row_id}: Normalizing media {file_label}...")
+            file_bytes, mime_type, file_name = normalize_media(
+                file_bytes, mime_type, file_name, post_type
+            )
+
+            # העלאה ל-Cloudinary
+            logger.info(f"Row {row_id}: Uploading to Cloudinary {file_label}...")
+            cloud_url = upload_to_cloudinary(file_bytes, mime_type, file_name)
+            cloud_urls.append(cloud_url)
+            mime_types.append(mime_type)
+
+        # שמירת כל ה-URLs לטבלה (מופרדים בפסיק)
+        cloud_urls_str = ",".join(cloud_urls)
 
         # ── שלב 4: פרסום ──
-        # קובע לאילו רשתות לפרסם
         targets = []
         if network in (NETWORK_IG, NETWORK_BOTH):
             targets.append(NETWORK_IG)
@@ -207,24 +225,44 @@ def process_row(
         for target in targets:
             if target == NETWORK_IG:
                 caption = caption_ig or caption_fb
-                logger.info(f"Row {row_id}: Publishing to Instagram ({post_type})...")
-                try:
-                    results[NETWORK_IG] = _publish_with_retry(
-                        ig_publish_feed, cloud_url, caption, mime_type, post_type,
-                        row_id=row_id, network_name="IG",
-                    )
-                except Exception as e:
-                    errors[NETWORK_IG] = e
+                if is_carousel:
+                    logger.info(f"Row {row_id}: Publishing carousel to Instagram ({len(cloud_urls)} items)...")
+                    try:
+                        results[NETWORK_IG] = _publish_with_retry(
+                            ig_publish_carousel, cloud_urls, caption, mime_types,
+                            row_id=row_id, network_name="IG",
+                        )
+                    except Exception as e:
+                        errors[NETWORK_IG] = e
+                else:
+                    logger.info(f"Row {row_id}: Publishing to Instagram ({post_type})...")
+                    try:
+                        results[NETWORK_IG] = _publish_with_retry(
+                            ig_publish_feed, cloud_urls[0], caption, mime_types[0], post_type,
+                            row_id=row_id, network_name="IG",
+                        )
+                    except Exception as e:
+                        errors[NETWORK_IG] = e
             else:
                 caption = caption_fb or caption_ig
-                logger.info(f"Row {row_id}: Publishing to Facebook ({post_type})...")
-                try:
-                    results[NETWORK_FB] = _publish_with_retry(
-                        fb_publish_feed, cloud_url, caption, mime_type, post_type,
-                        row_id=row_id, network_name="FB",
-                    )
-                except Exception as e:
-                    errors[NETWORK_FB] = e
+                if is_carousel:
+                    logger.info(f"Row {row_id}: Publishing carousel to Facebook ({len(cloud_urls)} items)...")
+                    try:
+                        results[NETWORK_FB] = _publish_with_retry(
+                            fb_publish_carousel, cloud_urls, caption, mime_types,
+                            row_id=row_id, network_name="FB",
+                        )
+                    except Exception as e:
+                        errors[NETWORK_FB] = e
+                else:
+                    logger.info(f"Row {row_id}: Publishing to Facebook ({post_type})...")
+                    try:
+                        results[NETWORK_FB] = _publish_with_retry(
+                            fb_publish_feed, cloud_urls[0], caption, mime_types[0], post_type,
+                            row_id=row_id, network_name="FB",
+                        )
+                    except Exception as e:
+                        errors[NETWORK_FB] = e
 
         # ── שלב 5: סימון תוצאה ──
         if errors and not results:
@@ -247,7 +285,7 @@ def process_row(
                 sheet_row_number,
                 {
                     COL_STATUS: STATUS_ERROR,
-                    COL_CLOUDINARY_URL: cloud_url,
+                    COL_CLOUDINARY_URL: cloud_urls_str,
                     COL_RESULT: result_str,
                     COL_ERROR: error_detail[:500],
                 },
@@ -258,7 +296,7 @@ def process_row(
                 sheet_row_number,
                 {
                     COL_STATUS: STATUS_POSTED,
-                    COL_CLOUDINARY_URL: cloud_url,
+                    COL_CLOUDINARY_URL: cloud_urls_str,
                     COL_RESULT: result_str,
                     COL_ERROR: "",
                 },
