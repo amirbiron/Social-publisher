@@ -16,6 +16,9 @@ let editPostId = null;
 const PAGE_SIZE = 20;
 let currentPage = 1;
 
+// File ID visibility
+let showFileIds = false;
+
 // Drive browser state
 let driveStack = [];       // [{folderId, name}] for breadcrumb
 let selectedDriveFile = null;
@@ -229,11 +232,14 @@ function renderPosts() {
     const thumbSrc = firstFileId ? `/api/drive/thumbnail/${encodeURIComponent(firstFileId)}` : '';
     const fileClickable = config.isDev && firstFileId;
     const fileClickAttr = fileClickable ? `onclick="openFileIdModal(this.dataset.fileIds)" data-file-ids="${escapeHtml(post.drive_file_id)}" style="cursor:pointer"` : '';
+    const isMultiFile = fileIds.length > 1;
+    const fileLabel = isMultiFile ? fileIds.length + ' קבצים' : truncate(firstFileId, 14);
+    const fileTextPart = (showFileIds || isMultiFile) ? `<span class="file-name-text" title="${escapeHtml(post.drive_file_id)}">${fileLabel}</span>` : '';
     const fileCell = firstFileId
       ? `<div class="cell-file-preview" ${fileClickAttr}>
            <img class="file-thumbnail" src="${thumbSrc}" alt="" loading="lazy" onclick="event.stopPropagation(); openLightbox(this.src)" onerror="this.style.display='none'; this.nextElementSibling.style.display='flex'">
            <span class="file-thumbnail-fallback" style="display:none">&#128247;</span>
-           <span class="file-name-text" title="${escapeHtml(post.drive_file_id)}">${fileIds.length > 1 ? fileIds.length + ' קבצים' : truncate(firstFileId, 14)}</span>
+           ${fileTextPart}
          </div>`
       : '<span style="color:var(--color-text-muted)">-</span>';
 
@@ -260,14 +266,14 @@ function renderPosts() {
     cardsEl.innerHTML = prepared.map(({ post, badge, network, postType, publishAt, canEdit, canDelete }) => {
       const mFileIds = (post.drive_file_id || '').split(',').map(s => s.trim()).filter(Boolean);
       const mFirstId = mFileIds[0] || '';
-      const mFileLabel = mFileIds.length > 1 ? `${mFileIds.length} קבצים` : truncate(mFirstId, 20);
+      const mIsMulti = mFileIds.length > 1;
       const filePart = mFirstId
         ? `<div class="post-card-divider"></div>
            <div class="post-card-row">
              <span class="post-card-label">קובץ</span>
              <div class="post-card-file">
                <img src="/api/drive/thumbnail/${encodeURIComponent(mFirstId)}" alt="" loading="lazy" onclick="openLightbox(this.src)" onerror="this.style.display='none'">
-               <span>${mFileLabel}</span>
+               ${(mIsMulti || config.isDev) ? `<span>${mIsMulti ? mFileIds.length + ' קבצים' : truncate(mFirstId, 20)}</span>` : ''}
              </div>
            </div>`
         : '';
@@ -623,6 +629,14 @@ async function copyCaptionText() {
   } catch (e) {
     showToast('לא ניתן להעתיק', 'error');
   }
+}
+
+// ─── File ID Toggle ──────────────────────────────────────────
+function toggleFileIds() {
+  showFileIds = !showFileIds;
+  const arrow = document.getElementById('file-id-toggle-arrow');
+  if (arrow) arrow.innerHTML = showFileIds ? '&#9660;' : '&#9654;';
+  renderPosts();
 }
 
 // ═══════════════════════════════════════════════════════════════

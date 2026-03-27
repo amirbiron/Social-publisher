@@ -662,6 +662,7 @@ body {
   text-overflow: ellipsis;
   white-space: nowrap;
   max-width: 100px;
+  direction: rtl;
 }
 
 /* ─── Posts Table ────────────────────────────────────────────── */
