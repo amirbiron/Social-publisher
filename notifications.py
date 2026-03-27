@@ -88,6 +88,23 @@ def notify_health_issue(service: str, error_msg: str):
     send_telegram(text)
 
 
+def notify_meta_api_version_expiry(version: str, expiry_date: str, days_left: int):
+    """התראה על גרסת Meta API שעומדת לפוג."""
+    if days_left <= 7:
+        emoji = "🔴"
+    elif days_left <= 30:
+        emoji = "🟡"
+    else:
+        emoji = "🟢"
+    text = (
+        f"<b>{emoji} גרסת Meta API עומדת לפוג</b>\n"
+        f"<b>גרסה:</b> {html.escape(version)}\n"
+        f"<b>תפוגה:</b> {html.escape(expiry_date)}\n"
+        f"<b>נותרו:</b> {days_left} ימים"
+    )
+    send_telegram(text)
+
+
 def _truncate(text: str, max_len: int) -> str:
     """קיצור טקסט ארוך."""
     if len(text) > max_len:
