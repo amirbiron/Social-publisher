@@ -16,6 +16,8 @@ logger = logging.getLogger(__name__)
 
 TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "")
 TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID", "")
+CLIENT_NAME = os.environ.get("CLIENT_NAME", "")
+REPO_URL = os.environ.get("REPO_URL", "")
 
 TELEGRAM_API_URL = "https://api.telegram.org/bot{token}/sendMessage"
 TIMEOUT = 10  # seconds
@@ -86,6 +88,27 @@ def notify_health_issue(service: str, error_msg: str):
         f"<b>שגיאה:</b> {html.escape(_truncate(error_msg, 500))}"
     )
     send_telegram(text)
+
+
+def notify_meta_api_version_expiry(version: str, expiry_date: str, days_left: int):
+    """התראה על גרסת Meta API שעומדת לפוג."""
+    if days_left <= 7:
+        emoji = "🔴"
+    elif days_left <= 30:
+        emoji = "🟡"
+    else:
+        emoji = "🟢"
+    lines = [
+        f"<b>{emoji} גרסת Meta API עומדת לפוג</b>",
+    ]
+    if CLIENT_NAME:
+        lines.append(f"<b>לקוח:</b> {html.escape(CLIENT_NAME)}")
+    lines.append(f"<b>גרסה:</b> {html.escape(version)}")
+    lines.append(f"<b>תפוגה:</b> {html.escape(expiry_date)}")
+    lines.append(f"<b>נותרו:</b> {days_left} ימים")
+    if REPO_URL:
+        lines.append(f"<b>ריפו:</b> {html.escape(REPO_URL)}")
+    send_telegram("\n".join(lines))
 
 
 def _truncate(text: str, max_len: int) -> str:
