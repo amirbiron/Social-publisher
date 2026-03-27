@@ -149,11 +149,25 @@ function clearFilters() {
 function handleLogoUpload(event) {
   const file = event.target.files[0];
   if (!file) return;
+  event.target.value = '';
   const reader = new FileReader();
   reader.onload = function(e) {
-    const dataUrl = e.target.result;
-    applyLogoImage(dataUrl);
-    try { localStorage.setItem('sp-custom-logo', dataUrl); } catch (err) {}
+    const img = new Image();
+    img.onload = function() {
+      const MAX = 128;
+      const canvas = document.createElement('canvas');
+      canvas.width = MAX;
+      canvas.height = MAX;
+      const ctx = canvas.getContext('2d');
+      const size = Math.min(img.width, img.height);
+      const sx = (img.width - size) / 2;
+      const sy = (img.height - size) / 2;
+      ctx.drawImage(img, sx, sy, size, size, 0, 0, MAX, MAX);
+      const compressed = canvas.toDataURL('image/jpeg', 0.8);
+      applyLogoImage(compressed);
+      try { localStorage.setItem('sp-custom-logo', compressed); } catch (err) {}
+    };
+    img.src = e.target.result;
   };
   reader.readAsDataURL(file);
 }
