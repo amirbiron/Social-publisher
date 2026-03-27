@@ -213,7 +213,7 @@ function renderPosts() {
     const firstFileId = fileIds[0] || '';
     const thumbSrc = firstFileId ? `/api/drive/thumbnail/${encodeURIComponent(firstFileId)}` : '';
     const fileClickable = config.isDev && firstFileId;
-    const fileClickAttr = fileClickable ? `onclick="openFileIdModal('${escapeHtml(post.drive_file_id)}')" style="cursor:pointer"` : '';
+    const fileClickAttr = fileClickable ? `onclick="openFileIdModal(this.dataset.fileIds)" data-file-ids="${escapeHtml(post.drive_file_id)}" style="cursor:pointer"` : '';
     const fileCell = firstFileId
       ? `<div class="cell-file-preview" ${fileClickAttr}>
            <img class="file-thumbnail" src="${thumbSrc}" alt="" loading="lazy" onclick="event.stopPropagation(); openLightbox(this.src)" onerror="this.style.display='none'; this.nextElementSibling.style.display='flex'">
