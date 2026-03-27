@@ -69,6 +69,7 @@ app = Flask(__name__)
 # Set WEB_PANEL_SECRET to require a bearer token / query param for all requests.
 # Without it the panel is fully open — do NOT deploy without setting this.
 WEB_PANEL_SECRET = os.environ.get("WEB_PANEL_SECRET", "")
+WEB_PANEL_DEV_SECRET = os.environ.get("WEB_PANEL_DEV_SECRET", "")
 
 if not WEB_PANEL_SECRET:
     logger.warning(
@@ -82,6 +83,13 @@ _COOKIE_TOKEN = (
         WEB_PANEL_SECRET.encode(), b"panel_cookie", hashlib.sha256
     ).hexdigest()
     if WEB_PANEL_SECRET
+    else ""
+)
+_DEV_COOKIE_TOKEN = (
+    hmac.new(
+        WEB_PANEL_DEV_SECRET.encode(), b"panel_dev_cookie", hashlib.sha256
+    ).hexdigest()
+    if WEB_PANEL_DEV_SECRET
     else ""
 )
 
@@ -106,13 +114,21 @@ def _check_auth():
     # Accept: ?token=<secret>  (useful for browser bookmarks)
     token_param = request.args.get("token", "")
     if token_param and hmac.compare_digest(token_param, WEB_PANEL_SECRET):
-        # Set a session cookie so the user doesn't need the token on every click
-        # (handled after response via after_request)
+        return
+
+    # Accept: dev secret via ?token=<dev_secret>
+    if WEB_PANEL_DEV_SECRET and token_param and hmac.compare_digest(token_param, WEB_PANEL_DEV_SECRET):
         return
 
     # Accept: HMAC cookie set by a previous token= visit
     if request.cookies.get("panel_token") and hmac.compare_digest(
         request.cookies["panel_token"], _COOKIE_TOKEN
+    ):
+        return
+
+    # Accept: dev cookie
+    if _DEV_COOKIE_TOKEN and request.cookies.get("panel_dev") and hmac.compare_digest(
+        request.cookies["panel_dev"], _DEV_COOKIE_TOKEN
     ):
         return
 
@@ -125,23 +141,31 @@ def _check_auth():
 @app.after_request
 def _set_auth_cookie(response):
     """When the user authenticates via ?token=, persist an HMAC-derived cookie."""
+    token_param = request.args.get("token", "")
+    if not token_param:
+        return response
+
+    is_https = request.is_secure or request.headers.get("X-Forwarded-Proto") == "https"
+    cookie_opts = dict(httponly=True, secure=is_https, samesite="Lax", max_age=60 * 60 * 24 * 30)
+
+    # Dev secret → set dev cookie
     if (
+        WEB_PANEL_DEV_SECRET
+        and hmac.compare_digest(token_param, WEB_PANEL_DEV_SECRET)
+        and not request.cookies.get("panel_dev")
+    ):
+        response.set_cookie("panel_dev", _DEV_COOKIE_TOKEN, **cookie_opts)
+        # Also set regular panel_token so dev user has full access
+        if not request.cookies.get("panel_token"):
+            response.set_cookie("panel_token", _COOKIE_TOKEN, **cookie_opts)
+    # Regular secret → set panel cookie
+    elif (
         WEB_PANEL_SECRET
-        and request.args.get("token", "")
-        and hmac.compare_digest(request.args["token"], WEB_PANEL_SECRET)
+        and hmac.compare_digest(token_param, WEB_PANEL_SECRET)
         and not request.cookies.get("panel_token")
     ):
-        # Use secure=True only when the request came over HTTPS.
-        # Behind a reverse proxy (e.g. Render), check X-Forwarded-Proto.
-        is_https = request.is_secure or request.headers.get("X-Forwarded-Proto") == "https"
-        response.set_cookie(
-            "panel_token",
-            _COOKIE_TOKEN,
-            httponly=True,
-            secure=is_https,
-            samesite="Lax",
-            max_age=60 * 60 * 24 * 30,  # 30 days
-        )
+        response.set_cookie("panel_token", _COOKIE_TOKEN, **cookie_opts)
+
     return response
 
 
@@ -755,12 +779,18 @@ def api_health():
 @app.route("/api/config", methods=["GET"])
 def api_config():
     """מחזיר הגדרות ציבוריות לפרונטאנד."""
+    is_dev = (
+        _DEV_COOKIE_TOKEN
+        and request.cookies.get("panel_dev")
+        and hmac.compare_digest(request.cookies["panel_dev"], _DEV_COOKIE_TOKEN)
+    )
     return jsonify({
         "driveFolderId": DRIVE_FOLDER_ID,
         "columns": SHEET_COLUMNS,
         "statuses": [STATUS_READY, STATUS_IN_PROGRESS, STATUS_POSTED, STATUS_ERROR],
         "networks": [NETWORK_IG, NETWORK_FB, NETWORK_BOTH],
         "postTypes": [POST_TYPE_FEED, POST_TYPE_REELS],
+        "isDev": bool(is_dev),
     })
 
 

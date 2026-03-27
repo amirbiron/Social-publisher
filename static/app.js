@@ -212,9 +212,11 @@ function renderPosts() {
     const fileIds = (post.drive_file_id || '').split(',').map(s => s.trim()).filter(Boolean);
     const firstFileId = fileIds[0] || '';
     const thumbSrc = firstFileId ? `/api/drive/thumbnail/${encodeURIComponent(firstFileId)}` : '';
+    const fileClickable = config.isDev && firstFileId;
+    const fileClickAttr = fileClickable ? `onclick="openFileIdModal('${escapeHtml(post.drive_file_id)}')" style="cursor:pointer"` : '';
     const fileCell = firstFileId
-      ? `<div class="cell-file-preview">
-           <img class="file-thumbnail" src="${thumbSrc}" alt="" loading="lazy" onclick="openLightbox(this.src)" onerror="this.style.display='none'; this.nextElementSibling.style.display='flex'">
+      ? `<div class="cell-file-preview" ${fileClickAttr}>
+           <img class="file-thumbnail" src="${thumbSrc}" alt="" loading="lazy" onclick="event.stopPropagation(); openLightbox(this.src)" onerror="this.style.display='none'; this.nextElementSibling.style.display='flex'">
            <span class="file-thumbnail-fallback" style="display:none">&#128247;</span>
            <span class="file-name-text" title="${escapeHtml(post.drive_file_id)}">${fileIds.length > 1 ? fileIds.length + ' קבצים' : truncate(firstFileId, 14)}</span>
          </div>`
@@ -535,6 +537,15 @@ function showError(rowNumber) {
 function openCaptionModal(title, text) {
   document.getElementById('caption-modal-title').textContent = title;
   document.getElementById('caption-modal-text').textContent = text;
+  openModal('caption-modal');
+}
+
+function openFileIdModal(driveFileId) {
+  if (!config.isDev) return;
+  const ids = driveFileId.split(',').map(s => s.trim()).filter(Boolean);
+  const displayText = ids.join('\n');
+  document.getElementById('caption-modal-title').textContent = ids.length > 1 ? `File IDs (${ids.length})` : 'File ID';
+  document.getElementById('caption-modal-text').textContent = displayText;
   openModal('caption-modal');
 }
 
