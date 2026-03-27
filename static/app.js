@@ -404,7 +404,7 @@ function renderPagination(totalPages, totalItems) {
 
   const html = `<div class="pagination">
     <button class="btn btn-ghost btn-sm" onclick="goToPage(${currentPage - 1})" ${currentPage <= 1 ? 'disabled' : ''}>&laquo; הקודם</button>
-    <span class="pagination-info">${currentPage} / ${totalPages} <span class="pagination-total">(${totalItems})</span></span>
+    <span class="pagination-info">${currentPage} / ${totalPages}</span>
     <button class="btn btn-ghost btn-sm" onclick="goToPage(${currentPage + 1})" ${currentPage >= totalPages ? 'disabled' : ''}>הבא &raquo;</button>
   </div>`;
 
