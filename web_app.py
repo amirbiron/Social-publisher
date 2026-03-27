@@ -695,17 +695,10 @@ def _check_cloudinary() -> dict:
 META_API_VERSION_WARN_DAYS = int(os.environ.get("META_API_VERSION_WARN_DAYS", "30"))
 
 # תאריכי תפוגה ידועים של גרסאות Meta Graph API (fallback)
-# מקור: https://developers.facebook.com/docs/graph-api/changelog/
-# כל גרסה חיה כשנתיים מיום השחרור
+# עדכנו ידנית כשמטא מפרסמים תאריכים ב:
+# https://developers.facebook.com/docs/graph-api/changelog/
 _META_VERSION_EXPIRY = {
-    "v16.0": "2024-05-22",
-    "v17.0": "2024-09-14",
-    "v18.0": "2025-01-23",
-    "v19.0": "2025-05-13",
-    "v20.0": "2025-09-17",
-    "v21.0": "2026-01-21",
-    "v22.0": "2026-05-20",
-    "v23.0": "2026-09-16",
+    # "v21.0": "2026-XX-XX",  # TODO: update when Meta publishes expiry
 }
 
 
