@@ -12,6 +12,10 @@ let deleteRowNumber = null;
 let deletePostId = null;
 let editPostId = null;
 
+// Pagination state
+const PAGE_SIZE = 20;
+let currentPage = 1;
+
 // Drive browser state
 let driveStack = [];       // [{folderId, name}] for breadcrumb
 let selectedDriveFile = null;
@@ -75,6 +79,7 @@ async function loadPosts(silent = false) {
     posts = data.posts || [];
     header = data.header || [];
     lastStatusMap = buildStatusMap(posts);
+    if (!silent) currentPage = 1;
     renderPosts();
     updateStats();
     renderCalendar();
@@ -122,6 +127,7 @@ function applyFilters() {
   filters.dateFrom = document.getElementById('filter-date-from').value;
   filters.dateTo = document.getElementById('filter-date-to').value;
   filters.search = document.getElementById('filter-search').value;
+  currentPage = 1;
   renderPosts();
 }
 
@@ -132,6 +138,7 @@ function clearFilters() {
   document.getElementById('filter-date-to').value = '';
   document.getElementById('filter-search').value = '';
   filters = { status: '', network: '', dateFrom: '', dateTo: '', search: '' };
+  currentPage = 1;
   renderPosts();
 }
 
@@ -164,6 +171,7 @@ function renderPosts() {
     }
     hideElement('posts-table-wrapper');
     if (cardsEl) cardsEl.classList.add('hidden');
+    removePagination();
 
     // Show "no results" only when filters are active but no posts match
     if (posts.length > 0 && filtered.length === 0) {
@@ -188,8 +196,15 @@ function renderPosts() {
     return idB - idA;
   });
 
+  // Pagination
+  const totalPages = Math.ceil(sorted.length / PAGE_SIZE);
+  if (currentPage > totalPages) currentPage = totalPages;
+  if (currentPage < 1) currentPage = 1;
+  const startIdx = (currentPage - 1) * PAGE_SIZE;
+  const pageItems = sorted.slice(startIdx, startIdx + PAGE_SIZE);
+
   // Pre-compute shared values once per post
-  const prepared = sorted.map(post => {
+  const prepared = pageItems.map(post => {
     const status = (post.status || '').toUpperCase();
     return {
       post,
@@ -306,6 +321,35 @@ function renderPosts() {
       </div>`;
     }).join('');
   }
+
+  // Pagination controls
+  renderPagination(totalPages, sorted.length);
+}
+
+function removePagination() {
+  document.querySelectorAll('.pagination').forEach(el => el.remove());
+}
+
+function renderPagination(totalPages, totalItems) {
+  removePagination();
+
+  if (totalPages <= 1) return;
+
+  const html = `<div class="pagination">
+    <button class="btn btn-ghost btn-sm" onclick="goToPage(${currentPage - 1})" ${currentPage <= 1 ? 'disabled' : ''}>&laquo; הקודם</button>
+    <span class="pagination-info">${currentPage} / ${totalPages} <span class="pagination-total">(${totalItems})</span></span>
+    <button class="btn btn-ghost btn-sm" onclick="goToPage(${currentPage + 1})" ${currentPage >= totalPages ? 'disabled' : ''}>הבא &raquo;</button>
+  </div>`;
+
+  // Single pagination element at the end of the posts view
+  const postsView = document.getElementById('view-posts');
+  if (postsView) postsView.insertAdjacentHTML('beforeend', html);
+}
+
+function goToPage(page) {
+  currentPage = page;
+  renderPosts();
+  window.scrollTo({ top: 0, behavior: 'smooth' });
 }
 
 function updateStats() {

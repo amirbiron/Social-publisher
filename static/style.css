@@ -661,7 +661,7 @@ body {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  max-width: 60px;
+  max-width: 100px;
 }
 
 /* ─── Posts Table ────────────────────────────────────────────── */
@@ -713,6 +713,25 @@ body {
 .posts-table .cell-file {
   max-width: 100px;
   width: 100px;
+}
+
+/* ─── Pagination ─────────────────────────────────────────────── */
+.pagination {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-md);
+  padding: var(--space-md) 0;
+}
+
+.pagination-info {
+  font-size: var(--font-size-sm);
+  color: var(--color-text-secondary);
+}
+
+.pagination-total {
+  font-size: var(--font-size-xs);
+  color: var(--color-text-muted);
 }
 
 .posts-table .cell-caption {
