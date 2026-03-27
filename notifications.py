@@ -15,7 +15,9 @@ import requests
 logger = logging.getLogger(__name__)
 
 TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "")
-TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID", "")
+TELEGRAM_CHAT_IDS = [
+    cid.strip() for cid in os.environ.get("TELEGRAM_CHAT_ID", "").split(",") if cid.strip()
+]
 CLIENT_NAME = os.environ.get("CLIENT_NAME", "")
 REPO_URL = os.environ.get("REPO_URL", "")
 
@@ -25,38 +27,39 @@ TIMEOUT = 10  # seconds
 
 def is_telegram_configured() -> bool:
     """בודק אם התראות טלגרם מוגדרות."""
-    return bool(TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID)
+    return bool(TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_IDS)
 
 
 def send_telegram(message: str) -> bool:
     """
-    שולח הודעת טקסט לטלגרם.
-    מחזיר True אם נשלח בהצלחה, False אחרת.
+    שולח הודעת טקסט לטלגרם (לכל ה-chat IDs שהוגדרו).
+    מחזיר True אם נשלח בהצלחה לפחות לאחד, False אחרת.
     לעולם לא זורק exception — שגיאת התראה לא צריכה לשבור את הפרסום.
     """
     if not is_telegram_configured():
         logger.debug("Telegram not configured — skipping notification")
         return False
 
-    try:
-        resp = requests.post(
-            TELEGRAM_API_URL.format(token=TELEGRAM_BOT_TOKEN),
-            json={
-                "chat_id": TELEGRAM_CHAT_ID,
-                "text": message,
-                "parse_mode": "HTML",
-            },
-            timeout=TIMEOUT,
-        )
-        if resp.ok:
-            logger.info("Telegram notification sent")
-            return True
-        else:
-            logger.warning(f"Telegram send failed ({resp.status_code}): {resp.text}")
-            return False
-    except Exception as e:
-        logger.warning(f"Telegram send error: {e}")
-        return False
+    any_ok = False
+    for chat_id in TELEGRAM_CHAT_IDS:
+        try:
+            resp = requests.post(
+                TELEGRAM_API_URL.format(token=TELEGRAM_BOT_TOKEN),
+                json={
+                    "chat_id": chat_id,
+                    "text": message,
+                    "parse_mode": "HTML",
+                },
+                timeout=TIMEOUT,
+            )
+            if resp.ok:
+                logger.info(f"Telegram notification sent to {chat_id}")
+                any_ok = True
+            else:
+                logger.warning(f"Telegram send to {chat_id} failed ({resp.status_code}): {resp.text}")
+        except Exception as e:
+            logger.warning(f"Telegram send to {chat_id} error: {e}")
+    return any_ok
 
 
 def notify_publish_error(row_id: str, error_msg: str):
