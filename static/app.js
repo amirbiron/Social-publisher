@@ -79,7 +79,7 @@ async function loadPosts(silent = false) {
     posts = data.posts || [];
     header = data.header || [];
     lastStatusMap = buildStatusMap(posts);
-    currentPage = 1;
+    if (!silent) currentPage = 1;
     renderPosts();
     updateStats();
     renderCalendar();
