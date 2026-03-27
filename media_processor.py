@@ -27,7 +27,7 @@ MAX_RATIO = 1.91  # 1.91:1
 REELS_MIN_RATIO = 0.5625  # 9:16
 REELS_MAX_RATIO = 1.91    # 1.91:1
 JPEG_QUALITY_STEPS = [85, 80, 75, 70, 68]
-FFMPEG_TIMEOUT = 300  # seconds
+FFMPEG_TIMEOUT = int(os.environ.get("FFMPEG_TIMEOUT", "300"))  # seconds
 
 
 # ─── Exception ────────────────────────────────────────────────
