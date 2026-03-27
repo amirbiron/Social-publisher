@@ -540,7 +540,7 @@ body {
 }
 
 .filter-bar.collapsed .filter-toggle-arrow {
-  transform: rotate(-90deg);
+  transform: rotate(90deg);
 }
 
 .filter-content {
@@ -1070,7 +1070,7 @@ body {
 }
 
 .stats-bar.collapsed .stats-toggle-arrow {
-  transform: rotate(-90deg);
+  transform: rotate(90deg);
 }
 
 .stats-content {
