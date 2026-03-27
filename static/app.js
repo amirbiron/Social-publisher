@@ -437,22 +437,19 @@ function onNetworkChange() {
   const network = document.getElementById('form-network').value;
   const postTypeSelect = document.getElementById('form-post-type');
   const isFbOnly = network === 'FB';
+  const currentValue = postTypeSelect.value;
 
   if (isFbOnly) {
-    postTypeSelect.value = 'FEED';
-    postTypeSelect.disabled = true;
-    postTypeSelect.closest('.form-group').querySelector('.form-label').textContent = 'סוג פוסט';
     postTypeSelect.innerHTML = '<option value="FEED">תמונה / וידאו</option>';
+    postTypeSelect.disabled = true;
   } else {
-    postTypeSelect.disabled = false;
-    postTypeSelect.closest('.form-group').querySelector('.form-label').textContent = 'סוג פוסט';
     postTypeSelect.innerHTML =
       '<option value="FEED">פיד (תמונה/וידאו)</option>' +
       '<option value="REELS">ריל (וידאו)</option>';
+    postTypeSelect.disabled = false;
+    postTypeSelect.value = currentValue;
   }
 }
-
-function onPostTypeChange() {}
 
 function resetPostForm({ title, rowNumber = '', network = 'IG+FB', postType = 'FEED',
                          publishAt = '', captionIg = '', captionFb = '',

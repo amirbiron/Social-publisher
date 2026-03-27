@@ -11,6 +11,7 @@ import logging
 import os
 import re
 import sys
+import threading
 import requests as http_requests
 from datetime import datetime, timezone
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -810,18 +811,18 @@ def api_health():
     # שליחת התראות טלגרם על שירותים שנפלו (עם cooldown למניעת ספאם)
     now = datetime.now(timezone.utc)
     for name, check in checks.items():
-        if check["status"] == "error":
-            last_sent = _health_notify_cooldown.get(name)
-            if last_sent is None or (now - last_sent).total_seconds() >= HEALTH_NOTIFY_COOLDOWN_SECONDS:
-                notify_health_issue(name, check.get("error", "Unknown"))
-                _health_notify_cooldown[name] = now
-        elif name == "meta_api_version" and check["status"] in ("warning", "error"):
+        if name == "meta_api_version" and check["status"] in ("warning", "error"):
             last_sent = _health_notify_cooldown.get("meta_api_version")
             if last_sent is None or (now - last_sent).total_seconds() >= HEALTH_NOTIFY_COOLDOWN_SECONDS:
                 notify_meta_api_version_expiry(
                     check.get("version", "?"), check.get("expiry", "?"), check.get("days_left", 0)
                 )
                 _health_notify_cooldown["meta_api_version"] = now
+        elif check["status"] == "error":
+            last_sent = _health_notify_cooldown.get(name)
+            if last_sent is None or (now - last_sent).total_seconds() >= HEALTH_NOTIFY_COOLDOWN_SECONDS:
+                notify_health_issue(name, check.get("error", "Unknown"))
+                _health_notify_cooldown[name] = now
 
     if all_ok and not any(c["status"] in ("warning", "error") for c in checks.values()):
         _health_notify_cooldown.clear()
@@ -861,8 +862,44 @@ def api_config():
 
 
 # ═══════════════════════════════════════════════════════════════
+#  Daily Meta API Version Check
+# ═══════════════════════════════════════════════════════════════
+
+_DAILY_CHECK_INTERVAL = 24 * 60 * 60  # 24 hours
+
+def _daily_meta_version_check():
+    """בדיקה יומית של גרסת Meta API — רצה ברקע."""
+    while True:
+        try:
+            result = _check_meta_api_version()
+            logger.info(f"Daily Meta API version check: {result}")
+            if result.get("status") in ("warning", "error"):
+                last_sent = _health_notify_cooldown.get("meta_api_version_daily")
+                now = datetime.now(timezone.utc)
+                if last_sent is None or (now - last_sent).total_seconds() >= _DAILY_CHECK_INTERVAL:
+                    notify_meta_api_version_expiry(
+                        result.get("version", "?"),
+                        result.get("expiry", "?"),
+                        result.get("days_left", 0),
+                    )
+                    _health_notify_cooldown["meta_api_version_daily"] = now
+        except Exception as e:
+            logger.warning(f"Daily Meta API version check failed: {e}")
+        threading.Event().wait(_DAILY_CHECK_INTERVAL)
+
+
+def _start_daily_checks():
+    """מפעיל את הבדיקות היומיות ב-thread ברקע."""
+    t = threading.Thread(target=_daily_meta_version_check, daemon=True)
+    t.start()
+    logger.info("Daily Meta API version check started")
+
+
+# ═══════════════════════════════════════════════════════════════
 #  Main
 # ═══════════════════════════════════════════════════════════════
+
+_start_daily_checks()
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", "8080"))
