@@ -16,29 +16,34 @@ from notifications import (
 
 class TestIsTelegramConfigured:
     @patch("notifications.TELEGRAM_BOT_TOKEN", "tok")
-    @patch("notifications.TELEGRAM_CHAT_ID", "123")
+    @patch("notifications.TELEGRAM_CHAT_IDS", ["123"])
     def test_configured(self):
         assert is_telegram_configured() is True
 
+    @patch("notifications.TELEGRAM_BOT_TOKEN", "tok")
+    @patch("notifications.TELEGRAM_CHAT_IDS", ["123", "456"])
+    def test_configured_multiple(self):
+        assert is_telegram_configured() is True
+
     @patch("notifications.TELEGRAM_BOT_TOKEN", "")
-    @patch("notifications.TELEGRAM_CHAT_ID", "123")
+    @patch("notifications.TELEGRAM_CHAT_IDS", ["123"])
     def test_missing_token(self):
         assert is_telegram_configured() is False
 
     @patch("notifications.TELEGRAM_BOT_TOKEN", "tok")
-    @patch("notifications.TELEGRAM_CHAT_ID", "")
+    @patch("notifications.TELEGRAM_CHAT_IDS", [])
     def test_missing_chat_id(self):
         assert is_telegram_configured() is False
 
 
 class TestSendTelegram:
     @patch("notifications.TELEGRAM_BOT_TOKEN", "")
-    @patch("notifications.TELEGRAM_CHAT_ID", "")
+    @patch("notifications.TELEGRAM_CHAT_IDS", [])
     def test_not_configured_returns_false(self):
         assert send_telegram("hello") is False
 
     @patch("notifications.TELEGRAM_BOT_TOKEN", "tok123")
-    @patch("notifications.TELEGRAM_CHAT_ID", "999")
+    @patch("notifications.TELEGRAM_CHAT_IDS", ["999"])
     @patch("notifications.requests.post")
     def test_success(self, mock_post):
         mock_post.return_value = MagicMock(ok=True)
@@ -49,14 +54,35 @@ class TestSendTelegram:
         assert call_kwargs[1]["json"]["text"] == "test msg"
 
     @patch("notifications.TELEGRAM_BOT_TOKEN", "tok123")
-    @patch("notifications.TELEGRAM_CHAT_ID", "999")
+    @patch("notifications.TELEGRAM_CHAT_IDS", ["111", "222"])
+    @patch("notifications.requests.post")
+    def test_success_multiple_ids(self, mock_post):
+        mock_post.return_value = MagicMock(ok=True)
+        assert send_telegram("test msg") is True
+        assert mock_post.call_count == 2
+        chat_ids = [c[1]["json"]["chat_id"] for c in mock_post.call_args_list]
+        assert chat_ids == ["111", "222"]
+
+    @patch("notifications.TELEGRAM_BOT_TOKEN", "tok123")
+    @patch("notifications.TELEGRAM_CHAT_IDS", ["999"])
     @patch("notifications.requests.post")
     def test_api_failure_returns_false(self, mock_post):
         mock_post.return_value = MagicMock(ok=False, status_code=400, text="Bad Request")
         assert send_telegram("test") is False
 
     @patch("notifications.TELEGRAM_BOT_TOKEN", "tok123")
-    @patch("notifications.TELEGRAM_CHAT_ID", "999")
+    @patch("notifications.TELEGRAM_CHAT_IDS", ["111", "222"])
+    @patch("notifications.requests.post")
+    def test_partial_failure_returns_true(self, mock_post):
+        """אם ID אחד נכשל והשני מצליח — מחזיר True."""
+        mock_post.side_effect = [
+            MagicMock(ok=False, status_code=400, text="Bad"),
+            MagicMock(ok=True),
+        ]
+        assert send_telegram("test") is True
+
+    @patch("notifications.TELEGRAM_BOT_TOKEN", "tok123")
+    @patch("notifications.TELEGRAM_CHAT_IDS", ["999"])
     @patch("notifications.requests.post", side_effect=Exception("network error"))
     def test_exception_returns_false(self, mock_post):
         assert send_telegram("test") is False
