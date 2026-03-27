@@ -52,7 +52,7 @@ from google_api import (
     drive_list_folder,
     get_drive_service,
 )
-from notifications import notify_health_issue, notify_meta_api_version_expiry
+from notifications import notify_health_issue, notify_meta_api_version_expiry, notify_meta_api_version_unknown
 
 # ─── Logging ─────────────────────────────────────────────────
 logging.basicConfig(
@@ -694,57 +694,81 @@ def _check_cloudinary() -> dict:
 
 META_API_VERSION_WARN_DAYS = int(os.environ.get("META_API_VERSION_WARN_DAYS", "30"))
 
+# תאריכי תפוגה ידועים של גרסאות Meta Graph API (fallback)
+# עדכנו ידנית כשמטא מפרסמים תאריכים ב:
+# https://developers.facebook.com/docs/graph-api/changelog/
+_META_VERSION_EXPIRY = {
+    # "v21.0": "2026-XX-XX",  # TODO: update when Meta publishes expiry
+}
+
+
+def _get_version_expiry(version: str) -> str | None:
+    """מחזיר תאריך תפוגה ידוע לגרסה, או None."""
+    return _META_VERSION_EXPIRY.get(version) or _META_VERSION_EXPIRY.get("v" + version.lstrip("v"))
+
+
 def _check_meta_api_version() -> dict:
     """בדיקת תוקף גרסת Meta Graph API — מחזיר ימים עד תפוגה."""
     meta_api_version = os.environ.get("META_API_VERSION", "v21.0")
+
+    expiry_str = None
+
+    # ── ניסיון 1: API ──
     try:
-        # Meta's Platform Versioning API
         resp = http_requests.get(
             "https://graph.facebook.com/api_versioning",
             params={"access_token": os.environ.get("FB_PAGE_ACCESS_TOKEN", "")},
             timeout=10,
         )
-        if not resp.ok:
-            return {"status": "ok", "version": meta_api_version, "note": "Could not fetch version info"}
+        if resp.ok:
+            versions = resp.json().get("data", [])
+            for v in versions:
+                if v.get("gl_api_version") in (meta_api_version, meta_api_version.lstrip("v")):
+                    expiry_str = (v.get("gl_end_date") or v.get("end_date") or "")[:10] or None
+                    break
+    except Exception as e:
+        logger.debug(f"Meta API versioning endpoint failed: {e}")
 
-        versions = resp.json().get("data", [])
-        current = None
-        for v in versions:
-            if v.get("gl_api_version") == meta_api_version or v.get("gl_api_version") == meta_api_version.lstrip("v"):
-                current = v
-                break
+    # ── ניסיון 2: fallback לתאריכים ידועים ──
+    if not expiry_str:
+        expiry_str = _get_version_expiry(meta_api_version)
 
-        if not current:
-            return {"status": "ok", "version": meta_api_version, "note": "Version not found in API response"}
-
-        # Parse expiry (end date of the version)
-        expiry_str = current.get("gl_end_date") or current.get("end_date")
-        if not expiry_str:
-            return {"status": "ok", "version": meta_api_version}
-
-        expiry_date = datetime.strptime(expiry_str[:10], "%Y-%m-%d").replace(tzinfo=timezone.utc)
-        now = datetime.now(timezone.utc)
-        days_left = (expiry_date - now).days
-
-        result = {
+    # ── אם אין מידע בכלל ──
+    if not expiry_str:
+        return {
+            "status": "unknown",
             "version": meta_api_version,
-            "expiry": expiry_str[:10],
-            "days_left": days_left,
+            "note": f"Could not determine expiry for {meta_api_version}",
         }
 
-        if days_left < 0:
-            result["status"] = "error"
-            result["error"] = f"API version {meta_api_version} has expired!"
-        elif days_left <= META_API_VERSION_WARN_DAYS:
-            result["status"] = "warning"
-        else:
-            result["status"] = "ok"
+    # ── חישוב ימים ──
+    try:
+        expiry_date = datetime.strptime(expiry_str, "%Y-%m-%d").replace(tzinfo=timezone.utc)
+    except ValueError:
+        return {
+            "status": "unknown",
+            "version": meta_api_version,
+            "note": f"Invalid expiry date format: {expiry_str}",
+        }
 
-        return result
+    now = datetime.now(timezone.utc)
+    days_left = (expiry_date - now).days
 
-    except Exception as e:
-        # Don't fail health check if version check fails
-        return {"status": "ok", "version": meta_api_version, "note": f"Check failed: {str(e)[:100]}"}
+    result = {
+        "version": meta_api_version,
+        "expiry": expiry_str,
+        "days_left": days_left,
+    }
+
+    if days_left < 0:
+        result["status"] = "error"
+        result["error"] = f"API version {meta_api_version} has expired!"
+    elif days_left <= META_API_VERSION_WARN_DAYS:
+        result["status"] = "warning"
+    else:
+        result["status"] = "ok"
+
+    return result
 
 
 def _check_meta_token(token_name: str, token: str) -> dict:
@@ -801,9 +825,9 @@ def api_health():
             except Exception as e:
                 checks[name] = {"status": "error", "error": str(e)[:200]}
 
-    # meta_api_version warning לא נחשב כ-unhealthy
+    # meta_api_version warning/unknown לא נחשב כ-unhealthy
     all_ok = all(
-        c["status"] in ("ok", "warning") if name == "meta_api_version" else c["status"] == "ok"
+        c["status"] in ("ok", "warning", "unknown") if name == "meta_api_version" else c["status"] == "ok"
         for name, c in checks.items()
     )
     status_code = 200 if all_ok else 503
@@ -817,6 +841,11 @@ def api_health():
                 notify_meta_api_version_expiry(
                     check.get("version", "?"), check.get("expiry", "?"), check.get("days_left", 0)
                 )
+                _health_notify_cooldown["meta_api_version"] = now
+        elif name == "meta_api_version" and check["status"] == "unknown":
+            last_sent = _health_notify_cooldown.get("meta_api_version")
+            if last_sent is None or (now - last_sent).total_seconds() >= HEALTH_NOTIFY_COOLDOWN_SECONDS:
+                notify_meta_api_version_unknown(check.get("version", "?"))
                 _health_notify_cooldown["meta_api_version"] = now
         elif check["status"] == "error":
             last_sent = _health_notify_cooldown.get(name)
@@ -890,16 +919,21 @@ def _maybe_run_daily_version_check():
         try:
             result = _check_meta_api_version()
             logger.info(f"Daily Meta API version check: {result}")
-            if result.get("status") in ("warning", "error"):
-                now_inner = datetime.now(timezone.utc)
-                last_sent = _health_notify_cooldown.get("meta_api_version")
-                if last_sent is None or (now_inner - last_sent).total_seconds() >= _DAILY_CHECK_INTERVAL:
-                    notify_meta_api_version_expiry(
-                        result.get("version", "?"),
-                        result.get("expiry", "?"),
-                        result.get("days_left", 0),
-                    )
-                    _health_notify_cooldown["meta_api_version"] = now_inner
+            status = result.get("status")
+            now_inner = datetime.now(timezone.utc)
+            last_sent = _health_notify_cooldown.get("meta_api_version")
+            if last_sent and (now_inner - last_sent).total_seconds() < _DAILY_CHECK_INTERVAL:
+                return
+            if status in ("warning", "error"):
+                notify_meta_api_version_expiry(
+                    result.get("version", "?"),
+                    result.get("expiry", "?"),
+                    result.get("days_left", 0),
+                )
+                _health_notify_cooldown["meta_api_version"] = now_inner
+            elif status == "unknown":
+                notify_meta_api_version_unknown(result.get("version", "?"))
+                _health_notify_cooldown["meta_api_version"] = now_inner
         except Exception as e:
             logger.warning(f"Daily Meta API version check failed: {e}")
 
