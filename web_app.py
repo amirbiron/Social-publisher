@@ -824,8 +824,15 @@ def api_health():
                 notify_health_issue(name, check.get("error", "Unknown"))
                 _health_notify_cooldown[name] = now
 
-    if all_ok and not any(c["status"] in ("warning", "error") for c in checks.values()):
-        _health_notify_cooldown.clear()
+    if all_ok:
+        # ניקוי cooldown לשירותים שחזרו לפעול — למעט meta_api_version שמנוהל בנפרד
+        for name in list(_health_notify_cooldown):
+            if name != "meta_api_version":
+                _health_notify_cooldown.pop(name)
+        # ניקוי meta_api_version cooldown רק אם הגרסה תקינה
+        meta_check = checks.get("meta_api_version", {})
+        if meta_check.get("status") == "ok":
+            _health_notify_cooldown.pop("meta_api_version", None)
 
     result = {
         "status": "healthy" if all_ok else "unhealthy",
