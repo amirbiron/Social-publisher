@@ -273,7 +273,7 @@ function renderPosts() {
              <span class="post-card-label">קובץ</span>
              <div class="post-card-file">
                <img src="/api/drive/thumbnail/${encodeURIComponent(mFirstId)}" alt="" loading="lazy" onclick="openLightbox(this.src)" onerror="this.style.display='none'">
-               ${mIsMulti ? `<span>${mFileIds.length} קבצים</span>` : ''}
+               ${(mIsMulti || config.isDev) ? `<span>${mIsMulti ? mFileIds.length + ' קבצים' : truncate(mFirstId, 20)}</span>` : ''}
              </div>
            </div>`
         : '';
