@@ -1,7 +1,7 @@
 # מסמך אפיון: Multi-Channel Publisher
 
 > **תאריך:** 27.03.2026
-> **סטטוס:** טיוטה לאישור
+> **סטטוס:** טיוטה מעודכנת לאחר סבב ביקורת
 > **פרויקט בסיס:** Social Publisher (קיים ופעיל)
 
 ---
@@ -59,9 +59,10 @@ Google Sheets (תור פוסטים)
 ### Google Business Profile API — סקירה
 - **API:** Google My Business API / Business Profile API
 - **יכולות:** פוסטים (STANDARD, EVENT, OFFER), תמונות, עדכונים
-- **אימות:** OAuth 2.0 או Service Account
-- **מגבלות:** עד 1,500 בקשות API ליום, פוסט מוגבל ל-1,500 תווים
-- **סוגי פוסטים:** UPDATE (טקסט+תמונה), EVENT (אירוע עם תאריכים), OFFER (הנחה עם קופון)
+- **אימות:** OAuth 2.0 (ברירת מחדל). Service Account — רק לאחר POC שמוכיח תאימות עם החשבון העסקי הספציפי
+- **מגבלות:** המכסות תלויות באישור הפרויקט ובהגדרות Google (למשל 300 QPM לחלק מה-APIs). יש לאמת אותן בפועל מול הפרויקט לפני עלייה לאוויר. פוסט מוגבל ל-1,500 תווים
+- **סוגי פוסטים ב-API:** `STANDARD` (טקסט+תמונה), `EVENT` (אירוע עם תאריכים), `OFFER` (הנחה עם קופון)
+- **הערה חשובה:** ב-UI נציג "עדכון" למשתמש, אבל בקוד נמפה ל-`STANDARD` שהוא הסוג הרשמי ב-API. אין סוג `UPDATE` ב-GBP API
 
 ---
 
@@ -86,7 +87,7 @@ class BaseChannel:
 
     CHANNEL_ID: str               # מזהה ייחודי: "IG", "FB", "GBP"
     CHANNEL_NAME: str             # שם תצוגה: "Instagram", "Google Business"
-    SUPPORTED_POST_TYPES: list    # ["FEED", "REELS"] / ["UPDATE", "EVENT"]
+    SUPPORTED_POST_TYPES: list    # ["FEED", "REELS"] / ["STANDARD", "EVENT"]
     SUPPORTED_MEDIA_TYPES: list   # ["image", "video"] / ["image"]
 
     def validate(self, post_data: dict) -> list[str]:
@@ -161,7 +162,7 @@ class ChannelRegistry:
 |-------|--------|--------|
 | `network` | **עדכון** — תמיכה בערוצים נוספים | `IG+FB+GBP`, `GBP`, `IG+GBP` |
 | `caption_gbp` | כיתוב ל-Google Business | "עדכון חדש מהעסק..." |
-| `gbp_post_type` | סוג פוסט ב-GBP | `UPDATE` / `EVENT` / `OFFER` |
+| `gbp_post_type` | סוג פוסט ב-GBP | `STANDARD` / `EVENT` / `OFFER` |
 | `result_detail` | תוצאה מפורטת לכל ערוץ | `IG:OK:123 \| FB:OK:456 \| GBP:ERR:timeout` |
 | `source` | מקור הפוסט | `manual` / `auto` / `ai-panel` |
 
@@ -183,6 +184,7 @@ ALL            (קיצור ל-כל הערוצים הרשומים)
 
 ### 5.3 פורמט תוצאה מפורט
 
+**פתרון MVP — מחרוזת `result_detail`:**
 ```
 # עמודת result_detail
 IG:POSTED:17841405822953 | FB:POSTED:615273820 | GBP:ERROR:quota_exceeded
@@ -192,6 +194,36 @@ POSTED       → כל הערוצים הצליחו
 PARTIAL      → חלק הצליחו, חלק נכשלו (חדש!)
 ERROR        → כל הערוצים נכשלו
 ```
+
+> **הערה:** פורמט `result_detail` כמחרוזת מספיק ל-MVP, אך לא מתאים לסינון, retry לפי ערוץ, או ניתוח שגיאות בדוחות.
+> **שדרוג מומלץ (post-MVP):** הוספת Sheet נפרד בשם `deliveries` — כל שורה = ניסיון פרסום לערוץ בודד, עם עמודות: `post_id`, `channel`, `status`, `platform_id`, `error`, `attempt`, `timestamp`.
+
+### 5.4 סטטוסים פנימיים — מנגנון מניעת פרסום כפול
+
+כדי למנוע מצב שבו שני סבבי Cron קוראים את אותה שורה בו-זמנית:
+
+```
+READY        → ממתין לפרסום
+PROCESSING   → נלקח לטיפול (נעול)
+POSTED       → כל הערוצים הצליחו
+PARTIAL      → חלק הצליחו
+ERROR        → כל הערוצים נכשלו
+```
+
+**עמודות נדרשות:**
+
+| עמודה | תיאור | דוגמה |
+|-------|--------|--------|
+| `locked_at` | timestamp של נעילה | `2026-03-27T18:00:05Z` |
+| `run_id` | מזהה הריצה שנעלה את השורה | `run_abc123` |
+| `retry_count` | מספר ניסיונות | `0`, `1`, `2` |
+
+**זרימה:**
+1. Cron קורא שורות `READY` שהגיע זמנן
+2. מעדכן מיידית ל-`PROCESSING` + `locked_at` + `run_id`
+3. מפרסם לערוצים
+4. מעדכן ל-`POSTED` / `PARTIAL` / `ERROR`
+5. שורה שנשארת `PROCESSING` מעל X דקות → timeout, חוזרת ל-`READY` (עם הגדלת `retry_count`)
 
 ---
 
@@ -213,9 +245,27 @@ ERROR        → כל הערוצים נכשלו
 3. מפרסם לערוצים שהוגדרו בעמודת `network`
 4. מעדכן סטטוס + תוצאה
 
-**דרישה:** מערכת ה-AI צריכה לכתוב בפורמט הטבלה המוסכם (כולל `caption_gbp` אם רלוונטי).
+### 6.2 חוזה נתונים (Data Contract) מול מערכת ה-AI
 
-### 6.2 תרחיש: התערבות ידנית
+| שדה | חובה? | דוגמה | הערות |
+|---|---|---|---|
+| `status` | כן | `READY` | רק ערכים מותרים: `READY`, `DRAFT` |
+| `network` | כן | `IG+FB+GBP` | או `ALL` |
+| `scheduled_time` | כן | `2026-03-27 18:00` | timezone מוסכם (Asia/Jerusalem) |
+| `caption` | כן | "טקסט ברירת מחדל..." | caption כללי — fallback לכל ערוץ |
+| `caption_ig` | לא | "..." | אם קיים — עוקף את `caption` עבור IG |
+| `caption_fb` | לא | "..." | אם קיים — עוקף את `caption` עבור FB |
+| `caption_gbp` | מותנה | "..." | חובה אם GBP ברשימת הערוצים ואין `caption` כללי |
+| `media_url` / `drive_file_id` | מותנה | `https://...` | לפחות asset אחד לפוסט עם מדיה |
+| `gbp_post_type` | מותנה | `STANDARD` | חובה אם GBP ברשימת הערוצים |
+| `source` | כן | `ai-panel` | ערכים סגורים: `manual`, `auto`, `ai-panel` |
+
+**לוגיקת fallback לכיתובים:**
+1. אם יש `caption_{channel}` → משתמשים בו
+2. אחרת אם יש `caption` כללי → משתמשים בו
+3. אחרת → validation error (הפוסט לא יצא לפרסום)
+
+### 6.3 תרחיש: התערבות ידנית
 
 הפאנל החדש תומך גם בעבודה ידנית מלאה:
 - יצירת פוסט חדש ידנית
@@ -239,7 +289,7 @@ ERROR        → כל הערוצים נכשלו
 │  כיתוב Facebook:  ___________________       │
 │  כיתוב GBP:       ___________________       │
 │                                             │
-│  סוג פוסט GBP: [UPDATE ▾]                   │
+│  סוג פוסט GBP: [עדכון (STANDARD) ▾]          │
 └─────────────────────────────────────────────┘
 ```
 
@@ -265,6 +315,21 @@ ERROR        → כל הערוצים נכשלו
 סינון: [הכל ▾] [IG] [FB] [GBP] [שגיאות בלבד]
 ```
 
+### 7.4 ולידציה לפי יכולות ערוץ
+
+לא כל ערוץ תומך באותן יכולות. ה-UI צריך להתאים את עצמו בזמן אמת:
+
+| ערוץ | תמונה | וידאו | Reels | Stories | Carousel |
+|------|--------|--------|-------|---------|----------|
+| IG | ✅ | ✅ | ✅ | ✅ | ✅ |
+| FB | ✅ | ✅ | ✅ | ❌ | ✅ |
+| GBP | ✅ | ❌ | ❌ | ❌ | ❌ |
+
+**כללים:**
+- אם נבחר GBP → חסימת העלאת וידאו + הודעה למשתמש
+- אם נבחר GBP עם EVENT/OFFER → פתיחת שדות תאריך / קופון / תנאים
+- validation בצד הקליינט **לפני submit** (למנוע שגיאות מיותרות מצד ה-API)
+
 ---
 
 ## 8. Google Business Profile — פירוט טכני
@@ -275,7 +340,7 @@ ERROR        → כל הערוצים נכשלו
 class GoogleBusinessChannel(BaseChannel):
     CHANNEL_ID = "GBP"
     CHANNEL_NAME = "Google Business Profile"
-    SUPPORTED_POST_TYPES = ["UPDATE", "EVENT", "OFFER"]
+    SUPPORTED_POST_TYPES = ["STANDARD", "EVENT", "OFFER"]
     SUPPORTED_MEDIA_TYPES = ["image"]  # GBP לא תומך בוידאו בפוסטים
 
     def publish(self, post_data: dict) -> PublishResult:
@@ -292,7 +357,7 @@ class GoogleBusinessChannel(BaseChannel):
 # יצירת פוסט
 POST https://mybusiness.googleapis.com/v4/accounts/{account_id}/locations/{location_id}/localPosts
 
-# גוף הבקשה (UPDATE)
+# גוף הבקשה (STANDARD)
 {
     "languageCode": "he",
     "summary": "טקסט הפוסט...",
@@ -310,16 +375,75 @@ POST https://mybusiness.googleapis.com/v4/accounts/{account_id}/locations/{locat
 # Google Business Profile
 GBP_ACCOUNT_ID=accounts/123456789
 GBP_LOCATION_ID=locations/987654321
-# אימות — דרך אותו Service Account (עם הרשאות GBP)
-# או OAuth2 נפרד:
+
+# אימות — OAuth 2.0 (ברירת מחדל)
 GBP_OAUTH_CLIENT_ID=...
 GBP_OAUTH_CLIENT_SECRET=...
 GBP_REFRESH_TOKEN=...
 ```
 
+> **הערה לגבי אימות:** ברירת המחדל היא OAuth 2.0. שימוש ב-Service Account אפשרי רק לאחר POC שמוכיח שזה עובד עם החשבון העסקי הספציפי. תהליך הגישה ל-GBP API דורש אישור פרויקט מ-Google — פרויקט שלא אושר עלול להיות מוגבל ל-0 QPM.
+
 ---
 
-## 9. שלבי פיתוח
+## 9. Retry Policy
+
+### 9.1 עקרון: retry פר ערוץ, לא לכל הפוסט
+
+אם פוסט הצליח ב-IG ו-FB אבל נכשל ב-GBP — ננסה שוב רק את GBP.
+
+### 9.2 סיווג שגיאות
+
+| סוג שגיאה | Retryable? | דוגמאות |
+|-----------|------------|---------|
+| שגיאת רשת / timeout | ✅ כן | `ConnectionError`, `Timeout`, `502/503/504` |
+| rate limit | ✅ כן | `429`, `quota_exceeded` |
+| שגיאת שרת | ✅ כן | `500`, `InternalServerError` |
+| תוכן לא תקין | ❌ לא | `caption_too_long`, `invalid_media_format` |
+| הרשאות חסרות | ❌ לא | `403`, `insufficient_permissions` |
+| משאב לא נמצא | ❌ לא | `404`, `location_not_found` |
+
+### 9.3 מדיניות retry אוטומטי
+
+- **מספר ניסיונות:** עד 3 (כולל הניסיון הראשוני)
+- **ביניהם:** exponential backoff — 30s, 120s, 300s
+- **rate limit:** המתנה לפי `Retry-After` header אם קיים, אחרת 60s
+- **לאחר 3 ניסיונות כושלים:** סימון `ERROR` + retry ידני בלבד מה-UI
+
+### 9.4 גישת MVP
+
+בשלב הראשון — **retry ידני בלבד** דרך כפתור "נסה שוב" בפאנל.
+retry אוטומטי ייכנס רק לאחר שהמערכת יציבה.
+
+---
+
+## 10. Observability
+
+### 10.1 לוגים מובנים
+
+כל ניסיון פרסום ירשום:
+
+| שדה | תיאור | דוגמה |
+|------|--------|--------|
+| `correlation_id` | מזהה ייחודי ל-job (כל הערוצים של אותו פוסט) | `job_20260327_180005_abc` |
+| `channel` | ערוץ ספציפי | `GBP` |
+| `action` | מה נעשה | `publish`, `validate`, `retry` |
+| `started_at` | זמן התחלה | `2026-03-27T18:00:05Z` |
+| `ended_at` | זמן סיום | `2026-03-27T18:00:07Z` |
+| `status` | תוצאה | `success`, `error` |
+| `error_raw` | הודעת שגיאה גולמית מה-API | `{"error": {"code": 429, ...}}` |
+| `error_friendly` | הודעה ידידותית ל-UI | `חריגה ממכסת בקשות — נסה שוב מאוחר יותר` |
+
+### 10.2 התראות Telegram
+
+הרחבת מערכת ההתראות הקיימת:
+- שגיאה בערוץ ספציפי (עם `correlation_id`)
+- סטטוס `PARTIAL` — הצלחה חלקית
+- timeout על שורה `PROCESSING`
+
+---
+
+## 11. שלבי פיתוח
 
 ### שלב 1: Channel Layer (ארכיטקטורה)
 - [ ] יצירת תיקיית `channels/` עם `base.py` ו-`registry.py`
@@ -327,11 +451,12 @@ GBP_REFRESH_TOKEN=...
 - [ ] עדכון `main.py` לעבוד דרך Registry
 - [ ] טסטים — ווידוא שהזרימה הקיימת עובדת כמו קודם
 
-### שלב 2: Google Business Profile
-- [ ] מימוש `GoogleBusinessChannel`
-- [ ] הגדרת אימות (Service Account / OAuth)
-- [ ] תמיכה בסוגי פוסטים: UPDATE, EVENT, OFFER
+### שלב 2: Google Business Profile (STANDARD בלבד)
+- [ ] POC אימות — OAuth 2.0 מול חשבון GBP אמיתי
+- [ ] אימות מכסות API בפועל מול הפרויקט
+- [ ] מימוש `GoogleBusinessChannel` — סוג `STANDARD` בלבד
 - [ ] טסטים
+- [ ] **שלב 2b (לאחר יציבות):** הוספת EVENT ו-OFFER עם שדות תאריך/קופון
 
 ### שלב 3: עדכון UI
 - [ ] בחירת ערוצים מרובים בטופס יצירת פוסט
@@ -341,18 +466,21 @@ GBP_REFRESH_TOKEN=...
 - [ ] כפתור "נסה שוב" לערוץ ספציפי שנכשל
 
 ### שלב 4: עדכון Google Sheets
-- [ ] הוספת עמודות חדשות
+- [ ] הוספת עמודות חדשות (כולל `locked_at`, `run_id`, `retry_count`)
+- [ ] מימוש מנגנון PROCESSING / lock למניעת פרסום כפול
 - [ ] עדכון לוגיקת סטטוס (PARTIAL)
 - [ ] עדכון `result_detail` לפורמט מרובה ערוצים
 
 ### שלב 5: חיבור למערכת AI
-- [ ] הגדרת פורמט הטבלה המשותף
+- [ ] יישום Data Contract (סעיף 6.2) מול מערכת ה-AI
+- [ ] ולידציה של שורות נכנסות לפי חוזה הנתונים
+- [ ] מימוש לוגיקת fallback לכיתובים
 - [ ] ווידוא קליטה אוטומטית
 - [ ] טסטים E2E
 
 ---
 
-## 10. סיכום טכני
+## 12. סיכום טכני
 
 | נושא | פרטים |
 |------|--------|
@@ -372,12 +500,14 @@ GBP_REFRESH_TOKEN=...
 
 ---
 
-## 11. שאלות פתוחות לבירור עם הלקוח
+## 13. שאלות פתוחות לבירור עם הלקוח
 
-1. **אימות GBP:** האם ל-Service Account הקיים יש הרשאות ל-Google Business Profile, או שצריך OAuth נפרד?
-2. **סוג פוסט GBP:** האם צריך רק UPDATE (רגיל), או גם EVENT ו-OFFER?
-3. **תמונות GBP:** האם כל פוסט ב-GBP חייב תמונה, או שאפשר גם טקסט בלבד?
-4. **מספר Locations:** האם הלקוח מנהל מיקום אחד או כמה (multi-location)?
-5. **פורמט ה-Sheets:** האם מערכת ה-AI יכולה להוסיף את העמודות החדשות (`caption_gbp`, `gbp_post_type`)?
-6. **Retry:** האם רוצים retry אוטומטי גם ל-GBP, כמו שיש ל-Meta?
-7. **התראות:** האם להרחיב את התראות הטלגרם גם ל-GBP?
+1. **אימות GBP:** יש לבצע POC עם OAuth 2.0 מול החשבון העסקי. האם יש גישה פעילה ל-GBP API?
+2. **אישור פרויקט Google:** האם הפרויקט ב-Google Cloud אושר לשימוש ב-Business Profile API? (ללא אישור — 0 QPM)
+3. **סוג פוסט GBP:** נתחיל עם STANDARD בלבד. האם EVENT ו-OFFER נדרשים לגרסה הראשונה?
+4. **תמונות GBP:** האם כל פוסט ב-GBP חייב תמונה, או שאפשר גם טקסט בלבד?
+5. **מספר Locations:** האם הלקוח מנהל מיקום אחד או כמה (multi-location)?
+6. **פורמט ה-Sheets:** האם מערכת ה-AI יכולה לעבוד לפי Data Contract (סעיף 6.2) — כולל `caption_gbp`, `gbp_post_type`, `source`?
+7. **Retry:** ב-MVP נתחיל עם retry ידני בלבד. האם יש צורך דחוף ב-retry אוטומטי?
+8. **התראות:** האם להרחיב את התראות הטלגרם גם ל-GBP?
+9. **Timezone:** האם `scheduled_time` צריך להיות תמיד Asia/Jerusalem, או שנדרש timezone דינמי?
