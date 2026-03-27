@@ -159,11 +159,13 @@ function handleLogoUpload(event) {
 }
 
 function applyLogoImage(dataUrl) {
+  const logo = document.getElementById('sidebar-logo');
   const img = document.getElementById('sidebar-logo-img');
   const text = document.getElementById('sidebar-logo-text');
   img.src = dataUrl;
   img.classList.remove('hidden');
   text.style.display = 'none';
+  logo.classList.add('has-image');
 }
 
 // Restore custom logo on load
