@@ -1,7 +1,7 @@
 # מסמך אפיון: Multi-Channel Publisher
 
 > **תאריך:** 27.03.2026
-> **סטטוס:** טיוטה מעודכנת לאחר סבב ביקורת
+> **סטטוס:** v2 — מעודכן לאחר ביקורת + Technical Tasks מפורטים
 > **פרויקט בסיס:** Social Publisher (קיים ופעיל)
 
 ---
@@ -61,8 +61,11 @@ Google Sheets (תור פוסטים)
 - **יכולות:** פוסטים (STANDARD, EVENT, OFFER), תמונות, עדכונים
 - **אימות:** OAuth 2.0 (ברירת מחדל). Service Account — רק לאחר POC שמוכיח תאימות עם החשבון העסקי הספציפי
 - **מגבלות:** המכסות תלויות באישור הפרויקט ובהגדרות Google (למשל 300 QPM לחלק מה-APIs). יש לאמת אותן בפועל מול הפרויקט לפני עלייה לאוויר. פוסט מוגבל ל-1,500 תווים
-- **סוגי פוסטים ב-API:** `STANDARD` (טקסט+תמונה), `EVENT` (אירוע עם תאריכים), `OFFER` (הנחה עם קופון)
+- **סוגי פוסטים ב-API:** `STANDARD` (טקסט+תמונה או טקסט בלבד), `EVENT` (אירוע עם תאריכים), `OFFER` (הנחה עם קופון)
+- **תמיכה בטקסט בלבד:** שדה `media` לא מסומן כחובה ב-LocalPost, כך שאפשר לפרסם פוסט `STANDARD` עם `summary` בלבד
+- **Multi-location:** GBP תומך בכמה מיקומים לחשבון. שליפה דרך `accounts.locations.list`. תמיכה במיקום ברמת שורה (`google_location_id`) ולא כקונפיג גלובלי
 - **הערה חשובה:** ב-UI נציג "עדכון" למשתמש, אבל בקוד נמפה ל-`STANDARD` שהוא הסוג הרשמי ב-API. אין סוג `UPDATE` ב-GBP API
+- **גישת MVP:** נתחיל עם `STANDARD` בלבד. `EVENT` ו-`OFFER` דורשים שדות נוספים (event, offer) ויתווספו לאחר ייצוב
 
 ---
 
@@ -74,13 +77,19 @@ Google Sheets (תור פוסטים)
 
 ```python
 # channels/base.py
+from dataclasses import dataclass
 
+@dataclass
 class PublishResult:
     """תוצאת פרסום לערוץ בודד"""
-    channel: str          # "IG", "FB", "GBP"
+    channel: str                    # "IG", "FB", "GBP"
     success: bool
-    post_id: str | None   # מזהה הפוסט בפלטפורמה
-    error: str | None
+    status: str                     # "POSTED" / "ERROR" / "SKIPPED"
+    platform_post_id: str | None    # מזהה הפוסט בפלטפורמה
+    error_code: str | None          # "timeout", "quota_exceeded", "invalid_caption"
+    error_message: str | None       # הודעה ידידותית ל-UI
+    raw_response: dict | None       # תשובה גולמית מה-API (ללוגים)
+    published_at: str | None        # timestamp של הפרסום
 
 class BaseChannel:
     """ממשק בסיס לכל ערוץ פרסום"""
@@ -88,7 +97,7 @@ class BaseChannel:
     CHANNEL_ID: str               # מזהה ייחודי: "IG", "FB", "GBP"
     CHANNEL_NAME: str             # שם תצוגה: "Instagram", "Google Business"
     SUPPORTED_POST_TYPES: list    # ["FEED", "REELS"] / ["STANDARD", "EVENT"]
-    SUPPORTED_MEDIA_TYPES: list   # ["image", "video"] / ["image"]
+    SUPPORTED_MEDIA_TYPES: list   # ["image", "video"] / ["image", "none"]
 
     def validate(self, post_data: dict) -> list[str]:
         """בדיקת תקינות לפני פרסום — מחזיר רשימת שגיאות (ריקה = תקין)"""
@@ -137,13 +146,23 @@ class ChannelRegistry:
     def get_all(self) -> list[BaseChannel]:
         """כל הערוצים הרשומים"""
 
+    def validate_channels(
+        self,
+        post_data: dict,
+        target_channels: list[str]
+    ) -> dict[str, list[str]]:
+        """
+        ולידציה לפני פרסום — מחזיר שגיאות לכל ערוץ.
+        {"GBP": ["missing google_location_id"]}
+        """
+
     def publish_to_channels(
         self,
         post_data: dict,
         target_channels: list[str]
     ) -> dict[str, PublishResult]:
         """
-        פרסום לרשימת ערוצים.
+        פרסום לרשימת ערוצים. ערוץ שנכשל לא עוצר ערוצים אחרים.
         מחזיר: {"IG": PublishResult(...), "FB": PublishResult(...), "GBP": PublishResult(...)}
         """
 ```
@@ -156,15 +175,24 @@ class ChannelRegistry:
 
 ### 5.1 שינויים בטבלה
 
-**עמודות חדשות:**
+**עמודות חדשות ומעודכנות:**
 
-| עמודה | תיאור | דוגמה |
-|-------|--------|--------|
-| `network` | **עדכון** — תמיכה בערוצים נוספים | `IG+FB+GBP`, `GBP`, `IG+GBP` |
-| `caption_gbp` | כיתוב ל-Google Business | "עדכון חדש מהעסק..." |
-| `gbp_post_type` | סוג פוסט ב-GBP | `STANDARD` / `EVENT` / `OFFER` |
-| `result` | **קיים** — הרחבת הפורמט לכלול גם GBP | `IG:123 \| FB:456 \| GBP:ERR:timeout` |
-| `source` | מקור הפוסט | `manual` / `auto` / `ai-panel` |
+| עמודה | חדש/קיים | תיאור | דוגמה |
+|-------|----------|--------|--------|
+| `network` | **עדכון** | תמיכה בערוצים נוספים | `IG+FB+GBP`, `GBP`, `ALL` |
+| `caption` | **חדש** | כיתוב כללי — fallback לכל ערוץ | "טקסט ברירת מחדל..." |
+| `caption_gbp` | **חדש** | כיתוב ייעודי ל-GBP | "עדכון חדש מהעסק..." |
+| `gbp_post_type` | **חדש** | סוג פוסט ב-GBP | `STANDARD` / `EVENT` / `OFFER` |
+| `google_location_id` | **חדש** | מזהה מיקום GBP ברמת שורה | `locations/987654321` |
+| `cta_type` | **חדש** | סוג Call To Action (GBP) | `LEARN_MORE`, `CALL`, `BOOK` |
+| `cta_url` | **חדש** | קישור CTA | `https://example.com/offer` |
+| `source` | **חדש** | מקור הפוסט | `manual` / `auto` / `ai-panel` |
+| `result` | **קיים** | הרחבת הפורמט לכלול גם GBP | `IG:123 \| FB:456 \| GBP:ERR:timeout` |
+| `locked_at` | **חדש** | timestamp נעילה | `2026-03-27T18:00:05Z` |
+| `processing_by` | **חדש** | מזהה הריצה שנעלה | `run_abc123` |
+| `retry_count` | **חדש** | מספר ניסיונות | `0`, `1`, `2` |
+| `published_channels` | **חדש** | ערוצים שהצליחו | `IG,FB` |
+| `failed_channels` | **חדש** | ערוצים שנכשלו | `GBP` |
 
 ### 5.2 פורמט Network מורחב
 
@@ -200,32 +228,28 @@ ERROR        → כל הערוצים נכשלו
 
 ### 5.4 סטטוסים פנימיים — מנגנון מניעת פרסום כפול
 
-> **מצב קיים:** המערכת כבר משתמשת ב-`IN_PROGRESS` כסטטוס נעילה, עם re-read של השורה לאימות (ראו `main.py:148-155`).
-> השדרוג הנדרש: הוספת `locked_at`, `run_id`, ו-`retry_count` לחיזוק המנגנון, והוספת סטטוס `PARTIAL` חדש.
+> **מצב קיים:** המערכת כבר משתמשת ב-`IN_PROGRESS` כסטטוס נעילה (ראו `main.py:148-155`, `config_constants.py:30`).
+> **שדרוג:** שינוי שם ל-`PROCESSING`, הוספת `DRAFT` ו-`PARTIAL`, חיזוק עם `locked_at` + `processing_by` + `retry_count`.
 
 ```
+DRAFT          → טיוטה, לא מוכן לפרסום (חדש!)
 READY          → ממתין לפרסום
-IN_PROGRESS    → נלקח לטיפול (נעול) — קיים כבר במערכת
+PROCESSING     → נלקח לטיפול (נעול) — מחליף את IN_PROGRESS
 POSTED         → כל הערוצים הצליחו
 PARTIAL        → חלק הצליחו (חדש!)
 ERROR          → כל הערוצים נכשלו
 ```
 
-**עמודות חדשות נדרשות:**
-
-| עמודה | תיאור | דוגמה |
-|-------|--------|--------|
-| `locked_at` | timestamp של נעילה | `2026-03-27T18:00:05Z` |
-| `run_id` | מזהה הריצה שנעלה את השורה | `run_abc123` |
-| `retry_count` | מספר ניסיונות | `0`, `1`, `2` |
+> **מיגרציה:** יש לעדכן את `STATUS_IN_PROGRESS` ב-`config_constants.py` ל-`STATUS_PROCESSING = "PROCESSING"` ולהתאים את כל ההפניות.
 
 **זרימה (שדרוג של הקיים):**
 1. Cron קורא שורות `READY` שהגיע זמנן
-2. מעדכן מיידית ל-`IN_PROGRESS` + `locked_at` + `run_id` (כיום כבר נעשה IN_PROGRESS בלבד)
+2. מעדכן מיידית ל-`PROCESSING` + `locked_at` + `processing_by`
 3. Re-read מהטבלה לאימות — אם סטטוס השתנה, מדלג (מנגנון קיים)
-4. מפרסם לערוצים
-5. מעדכן ל-`POSTED` / `PARTIAL` / `ERROR`
-6. שורה שנשארת `IN_PROGRESS` מעל X דקות → timeout, חוזרת ל-`READY` (עם הגדלת `retry_count`)
+4. ולידציה לפי ערוצים מבוקשים (network, caption, media, location)
+5. מפרסם לערוצים
+6. מעדכן ל-`POSTED` / `PARTIAL` / `ERROR` + `published_channels` + `failed_channels`
+7. שורה שנשארת `PROCESSING` מעל X דקות → timeout, חוזרת ל-`READY` (עם הגדלת `retry_count`)
 
 ---
 
@@ -251,15 +275,18 @@ ERROR          → כל הערוצים נכשלו
 
 | שדה | חובה? | דוגמה | הערות |
 |---|---|---|---|
-| `status` | כן | `READY` | רק ערכים מותרים: `READY`, `DRAFT` |
+| `status` | כן | `READY` | ערכים מותרים: `READY`, `DRAFT` |
 | `network` | כן | `IG+FB+GBP` | או `ALL` |
 | `scheduled_time` | כן | `2026-03-27 18:00` | timezone מוסכם (Asia/Jerusalem) |
 | `caption` | כן | "טקסט ברירת מחדל..." | caption כללי — fallback לכל ערוץ |
 | `caption_ig` | לא | "..." | אם קיים — עוקף את `caption` עבור IG |
 | `caption_fb` | לא | "..." | אם קיים — עוקף את `caption` עבור FB |
 | `caption_gbp` | מותנה | "..." | חובה אם GBP ברשימת הערוצים ואין `caption` כללי |
-| `media_url` / `drive_file_id` | מותנה | `https://...` | לפחות asset אחד לפוסט עם מדיה |
-| `gbp_post_type` | מותנה | `STANDARD` | חובה אם GBP ברשימת הערוצים |
+| `media_url` / `drive_file_id` | מותנה | `https://...` | לפחות asset אחד לפוסט עם מדיה. GBP תומך גם בטקסט בלבד |
+| `gbp_post_type` | מותנה | `STANDARD` | חובה אם GBP ברשימת הערוצים. ב-MVP רק `STANDARD` |
+| `google_location_id` | מותנה | `locations/987654321` | חובה אם GBP ברשימת הערוצים |
+| `cta_type` | לא | `LEARN_MORE` | רלוונטי ל-GBP STANDARD. Google מתעלמת מ-CTA ב-OFFER |
+| `cta_url` | מותנה | `https://...` | חובה אם יש `cta_type` |
 | `source` | כן | `ai-panel` | ערכים סגורים: `manual`, `auto`, `ai-panel` |
 
 **לוגיקת fallback לכיתובים:**
@@ -287,16 +314,20 @@ ERROR          → כל הערוצים נכשלו
 ### 7.1 בחירת ערוצים
 
 ```
-┌─────────────────────────────────────────────┐
-│  ערוצי פרסום:                               │
-│  [✓] Instagram   [✓] Facebook   [✓] GBP    │
-│                                             │
-│  כיתוב Instagram: ___________________       │
-│  כיתוב Facebook:  ___________________       │
-│  כיתוב GBP:       ___________________       │
-│                                             │
-│  סוג פוסט GBP: [עדכון (STANDARD) ▾]          │
-└─────────────────────────────────────────────┘
+┌───────────────────────────────────────────────┐
+│  ערוצי פרסום:                                 │
+│  [✓] Instagram   [✓] Facebook   [✓] GBP      │
+│                                               │
+│  כיתוב כללי:     ___________________          │
+│  כיתוב Instagram: ___________________  (אופ') │
+│  כיתוב Facebook:  ___________________  (אופ') │
+│  כיתוב GBP:       ___________________  (אופ') │
+│                                               │
+│  ── שדות Google Business (מוצגים רק אם GBP) ──│
+│  מיקום:          [בחר מיקום ▾] 🔄             │
+│  סוג פוסט GBP:   [עדכון (STANDARD) ▾]        │
+│  CTA:            [ללא ▾] [URL: ___________]   │
+└───────────────────────────────────────────────┘
 ```
 
 ### 7.2 תצוגת סטטוס מרובה ערוצים
@@ -346,24 +377,34 @@ ERROR          → כל הערוצים נכשלו
 class GoogleBusinessChannel(BaseChannel):
     CHANNEL_ID = "GBP"
     CHANNEL_NAME = "Google Business Profile"
-    SUPPORTED_POST_TYPES = ["STANDARD", "EVENT", "OFFER"]
-    SUPPORTED_MEDIA_TYPES = ["image"]  # GBP לא תומך בוידאו בפוסטים
+    SUPPORTED_POST_TYPES = ["STANDARD"]       # MVP — EVENT/OFFER יתווספו בהמשך
+    SUPPORTED_MEDIA_TYPES = ["image", "none"]  # תומך גם בפוסט טקסט בלבד
+
+    def validate(self, post_data: dict) -> list[str]:
+        """
+        ולידציה ל-GBP:
+        - google_location_id חובה
+        - gbp_post_type נתמך
+        - caption קיים (ישיר או fallback)
+        - אם יש מדיה — רק תמונה
+        """
 
     def publish(self, post_data: dict) -> PublishResult:
         """
         פרסום ל-Google Business Profile.
-        1. העלאת תמונה ל-Cloudinary (כבר קיים)
-        2. יצירת localPost דרך GBP API
+        1. קריאת google_location_id מהשורה
+        2. בניית LocalPost body (summary, topicType, media אופציונלי)
+        3. יצירת localPost דרך GBP API
         """
 ```
 
 ### 8.2 Google Business Profile API — קריאות
 
 ```python
-# יצירת פוסט
+# יצירת פוסט — location_id נקרא מהשורה בטבלה (google_location_id)
 POST https://mybusiness.googleapis.com/v4/accounts/{account_id}/locations/{location_id}/localPosts
 
-# גוף הבקשה (STANDARD)
+# גוף הבקשה — STANDARD עם תמונה
 {
     "languageCode": "he",
     "summary": "טקסט הפוסט...",
@@ -371,24 +412,36 @@ POST https://mybusiness.googleapis.com/v4/accounts/{account_id}/locations/{locat
         "mediaFormat": "PHOTO",
         "sourceUrl": "https://res.cloudinary.com/..."
     }],
-    "topicType": "STANDARD"   # או EVENT / OFFER
+    "topicType": "STANDARD"
 }
+
+# גוף הבקשה — STANDARD טקסט בלבד (ללא media)
+{
+    "languageCode": "he",
+    "summary": "טקסט הפוסט...",
+    "topicType": "STANDARD"
+}
+
+# שליפת מיקומים זמינים לחשבון
+GET https://mybusiness.googleapis.com/v4/accounts/{account_id}/locations
 ```
 
 ### 8.3 משתני סביבה חדשים
 
 ```env
-# Google Business Profile
+# Google Business Profile — OAuth 2.0
 GBP_ACCOUNT_ID=accounts/123456789
-GBP_LOCATION_ID=locations/987654321
-
-# אימות — OAuth 2.0 (ברירת מחדל)
 GBP_OAUTH_CLIENT_ID=...
 GBP_OAUTH_CLIENT_SECRET=...
 GBP_REFRESH_TOKEN=...
+
+# הערה: google_location_id נשמר ברמת שורה בטבלה, לא כ-env var גלובלי
+# כך שאפשר לפרסם לכמה מיקומים שונים
 ```
 
-> **הערה לגבי אימות:** ברירת המחדל היא OAuth 2.0. שימוש ב-Service Account אפשרי רק לאחר POC שמוכיח שזה עובד עם החשבון העסקי הספציפי. תהליך הגישה ל-GBP API דורש אישור פרויקט מ-Google — פרויקט שלא אושר עלול להיות מוגבל ל-0 QPM.
+> **הערה לגבי אימות:** ברירת המחדל היא OAuth 2.0 עם scope `business.manage`. שימוש ב-Service Account אפשרי רק לאחר POC. תהליך הגישה ל-GBP API דורש אישור פרויקט מ-Google — פרויקט שלא אושר עלול להיות מוגבל ל-0 QPM.
+
+> **הערה לגבי multi-location:** `GBP_ACCOUNT_ID` הוא גלובלי (חשבון אחד), אבל `google_location_id` נשמר ברמת שורה. כך הלקוח יכול לנהל כמה מיקומים מאותו פאנל.
 
 ---
 
@@ -451,48 +504,161 @@ GBP_REFRESH_TOKEN=...
 **הרחבה נדרשת:**
 - הוספת `correlation_id` להודעות (מזהה job ייחודי)
 - התראה ייעודית ל-GBP errors
-- התראה על timeout של שורה `IN_PROGRESS`
+- התראה על timeout של שורה `PROCESSING`
 
 ---
 
-## 11. שלבי פיתוח
+## 11. Technical Tasks — פירוט מלא
 
-### שלב 1: Channel Layer (ארכיטקטורה)
-- [ ] יצירת תיקיית `channels/` עם `base.py` ו-`registry.py`
-- [ ] מיגרציה של IG/FB הקיימים לתוך ה-Channel Interface (עטיפה, לא שכתוב)
-- [ ] עדכון `main.py` לעבוד דרך Registry
-- [ ] טסטים — ווידוא שהזרימה הקיימת עובדת כמו קודם
+### Phase 1 — Foundation
 
-### שלב 2: Google Business Profile (STANDARD בלבד)
-- [ ] POC אימות — OAuth 2.0 מול חשבון GBP אמיתי
-- [ ] אימות מכסות API בפועל מול הפרויקט
-- [ ] מימוש `GoogleBusinessChannel` — סוג `STANDARD` בלבד
-- [ ] טסטים
-- [ ] **שלב 2b (לאחר יציבות):** הוספת EVENT ו-OFFER עם שדות תאריך/קופון
-
-### שלב 3: עדכון UI
-- [ ] בחירת ערוצים מרובים בטופס יצירת פוסט
-- [ ] שדה caption נפרד לכל ערוץ
-- [ ] תצוגת סטטוס מרובה ערוצים
-- [ ] פילטר לפי ערוץ
-- [ ] כפתור "נסה שוב" לערוץ ספציפי שנכשל
-
-### שלב 4: עדכון Google Sheets
-- [ ] הוספת עמודות חדשות: `caption_gbp`, `gbp_post_type`, `caption` (כללי), `source`, `locked_at`, `run_id`, `retry_count`
-- [ ] שדרוג מנגנון IN_PROGRESS הקיים — הוספת `locked_at` + `run_id`
-- [ ] הוספת סטטוס `PARTIAL` (כיום הצלחה חלקית מסומנת כ-ERROR)
-- [ ] הרחבת פורמט עמודת `result` הקיימת לכלול GBP
-
-### שלב 5: חיבור למערכת AI
-- [ ] יישום Data Contract (סעיף 6.2) מול מערכת ה-AI
-- [ ] ולידציה של שורות נכנסות לפי חוזה הנתונים
+#### Task 1: Data Contract + Google Sheets Schema
+**מטרה:** הגדרת פורמט אחיד של שורה בטבלה, כך שגם המערכת הידנית וגם מערכת ה-AI יוכלו לעבוד מול אותו מבנה.
+- [ ] עדכון מבנה ה-Google Sheet עם כל העמודות החדשות (סעיף 5.1)
+- [ ] הגדרת ערכים מוסכמים: `network`, `status`, `source`, `gbp_post_type`
 - [ ] מימוש לוגיקת fallback לכיתובים
-- [ ] ווידוא קליטה אוטומטית
-- [ ] טסטים E2E
+- [ ] `google_location_id` ברמת שורה ולא כקונפיג גלובלי
+- **AC:** שורות ישנות של IG/FB ממשיכות לעבוד עם fallback; אפשר לקרוא שורה ולבנות `post_data` תקין
+
+#### Task 2: Base Channel + PublishResult + Registry
+**מטרה:** שכבת abstraction אחת לכל ערוצי הפרסום.
+- [ ] יצירת `channels/base.py` עם `PublishResult` + `BaseChannel`
+- [ ] יצירת `channels/registry.py` עם `register`, `get`, `validate_channels`, `publish_to_channels`
+- **AC:** אפשר לרשום ערוצים, לפרסם לרשימה, ולקבל result נפרד לכל ערוץ; אין תלות ישירה ב-`main.py` בערוצים ספציפיים
+
+#### Task 3: עטיפת IG/FB הקיימים למודל ערוצים
+**מטרה:** הכנסת המערכת הקיימת לארכיטקטורה החדשה בלי לשבור כלום.
+- [ ] יצירת `channels/meta_instagram.py` — wrapper סביב `meta_publish.py`
+- [ ] יצירת `channels/meta_facebook.py` — wrapper סביב `meta_publish.py`
+- [ ] עדכון `main.py` לעבוד דרך Registry
+- **AC:** פוסט IG/FB ממשיך לעבוד כמו לפני השינוי; regression test מוכיח שהזרימה לא נשברה
+
+#### Task 4: Publish Orchestrator + Locking + Idempotency
+**מטרה:** ריצה בטוחה של cron/job בלי פרסום כפול, עם תמיכה ב-PARTIAL.
+- [ ] שליפת שורות `READY`, נעילה ל-`PROCESSING` + `locked_at` + `processing_by`
+- [ ] Re-read לאימות (שדרוג מנגנון קיים)
+- [ ] חישוב סטטוס: `POSTED` / `PARTIAL` / `ERROR`
+- [ ] שחרור lock לשורה שנשארת `PROCESSING` מעל timeout
+- **AC:** אותו פוסט לא מתפרסם פעמיים; PARTIAL עובד; retry לערוץ בודד לא מפרסם מחדש ערוצים שהצליחו
+
+### Phase 2 — Google Business בסיסי
+
+#### Task 5: Google OAuth + Location Service
+**מטרה:** חיבור אמיתי ל-GBP, כולל תמיכה בכמה מיקומים.
+- [ ] מודול auth: OAuth token + refresh אוטומטי
+- [ ] מודול locations: `list_locations()`, `get_location()`, `validate_location_access()`
+- [ ] cache קצר לרשימת מיקומים
+- **AC:** המערכת מתחברת ל-Google עם OAuth; אפשר לשלוף מיקומים; `google_location_id` לא תקין → שגיאה ברורה
+
+#### Task 6: Google Business Channel — STANDARD only
+**מטרה:** GBP בפרודקשן בצורה הכי בטוחה: `STANDARD` בלבד.
+- [ ] `channels/google_business.py` עם `SUPPORTED_POST_TYPES = ["STANDARD"]`
+- [ ] תמיכה בטקסט בלבד (media אופציונלי)
+- [ ] תמיכה בטקסט + תמונה
+- [ ] קריאת `google_location_id` מהשורה
+- [ ] חסימה של `EVENT`/`OFFER` בשלב זה עם הודעה ברורה
+- **AC:** פוסט GBP טקסט בלבד מתפרסם; פוסט GBP עם תמונה מתפרסם; GBP בלי `google_location_id` → validation error
+
+#### Task 7: Result Mapping + Retry per Channel
+**מטרה:** הפיכת שגיאות ותוצאות למשהו שה-UI והאופרציה יכולים לעבוד איתו.
+- [ ] סיווג שגיאות: retryable (timeout, 5xx, rate limit) vs non-retryable (invalid caption, missing permissions)
+- [ ] retry ידני מערוץ ספציפי
+- [ ] הרחבת retry אוטומטי קיים (Meta) גם ל-GBP
+- [ ] עדכון `result` + `published_channels` + `failed_channels`
+- **AC:** retry ל-GBP בלי לפרסם שוב IG/FB; הודעת שגיאה ידידותית + error code טכני
+
+### Phase 3 — UI
+
+#### Task 8: UI Form מרובה ערוצים
+**מטרה:** יצירה ועריכה של פוסט רב-ערוצי מפאנל אחד.
+- [ ] checkbox לערוצים: IG / FB / GBP
+- [ ] שדה `caption` כללי + שדות caption אופציונליים לכל ערוץ
+- [ ] שדות GBP (מוצגים רק אם GBP מסומן): מיקום, `gbp_post_type`, `cta_type`, `cta_url`
+- [ ] validation בצד הקליינט לפני submit
+- **AC:** אפשר ליצור פוסט ל-IG+FB+GBP; GBP בלי location → לא ניתן לשמור; שדות Google לא מפריעים לפוסט Meta בלבד
+
+#### Task 9: UI תוצאות / שגיאות / Retry
+**מטרה:** תצוגה ברורה של מה קרה בכל ערוץ.
+- [ ] סטטוס נפרד לכל ערוץ בכרטיס פוסט
+- [ ] כפתור retry לערוץ שנכשל
+- [ ] פילטרים: הכל / IG / FB / GBP / שגיאות בלבד / partial בלבד
+- **AC:** PARTIAL מוצג נכון; retry נפרד לערוצים שנכשלו; אפשר לסנן פוסטים עם כשל ב-GBP
+
+#### Task 10: UI חיבור למיקומי Google
+**מטרה:** בחירת location נוחה במקום הזנה ידנית.
+- [ ] dropdown של מיקומים זמינים מ-Google
+- [ ] שמירה כ-`google_location_id` בטבלה
+- [ ] refresh לרשימת מיקומים
+- [ ] fallback להזנה ידנית למנהלי מערכת
+- **AC:** משתמש רואה מיקומים זמינים; location לא נגיש → אזהרה; אפשר לטעון מחדש בלי restart
+
+### Phase 4 — Integrations + Hardening
+
+#### Task 11: Cron Flow + AI Intake
+**מטרה:** מערכת ה-AI ממשיכה לכתוב ל-Sheets וה-Publisher קולט ומפרסם.
+- [ ] עדכון cron pipeline: פרסור `network`, fallback captions, `google_location_id`
+- [ ] validator לפני publish: network תקין, caption קיים, media מתאים, GBP location תקין
+- **AC:** מערכת ה-AI כותבת שורה והפובלישר קולט אוטומטית; חסר שדה חובה ל-GBP → error ברור בלי לפגוע ב-Meta
+
+#### Task 12: Logging, Monitoring, Admin Safety
+**מטרה:** תחזוקה ודיבוג אמיתיים.
+- [ ] `correlation_id` לכל job
+- [ ] לוג מובנה לכל publish attempt: channel, location, duration, success/error
+- [ ] masking של secrets בלוגים
+- [ ] הרחבת Telegram alerts ל-GBP + timeout של `PROCESSING`
+- **AC:** אפשר לזהות למה פוסט נכשל ובאיזה ערוץ; אין טוקנים בלוגים
+
+#### Task 13: Tests E2E + Deployment Checklist
+**מטרה:** עלייה לפרודקשן בלי הימורים.
+- [ ] Unit tests: parsing network, caption fallback, status aggregation, lock handling
+- [ ] Integration tests: registry + IG/FB wrappers + GBP mock
+- [ ] E2E scenarios: IG+FB בלבד, GBP text only, GBP+image, IG+FB+GBP PARTIAL, retry, location invalid
+- [ ] Deployment checklist + rollout עם feature flag ל-GBP
+- **AC:** כל תרחישי MVP עוברים; regression על IG/FB עובר
+
+### Phase 5 — Optional after MVP stabilization
+
+#### Task 14: GBP EVENT
+- [ ] תמיכה ב-`gbp_post_type=EVENT` עם start/end time
+- [ ] UI: שדות תאריך מוצגים רק כשנבחר EVENT
+- **AC:** EVENT בלי טווח תאריכים → validation error; EVENT מתפרסם בהצלחה
+
+#### Task 15: GBP OFFER
+- [ ] תמיכה ב-`OFFER` עם coupon code, redeem URL, terms, event window
+- [ ] UI: חסימת CTA רגיל ב-OFFER (Google מתעלמת מ-`callToAction` עבור OFFER)
+- **AC:** OFFER בלי שדות חובה → validation error; OFFER מתפרסם ונשמר עם result תקין
 
 ---
 
-## 12. סיכום טכני
+## 12. Sprint Plan מוצע
+
+| Sprint | Tasks | תיאור |
+|--------|-------|--------|
+| Sprint 1 | Task 1-4 | Foundation: schema, channel layer, IG/FB wrappers, orchestrator |
+| Sprint 2 | Task 5-7 | GBP: OAuth, STANDARD publish, result mapping |
+| Sprint 3 | Task 8-10 | UI: form, results, location selector |
+| Sprint 4 | Task 11-13 | Integration: cron, monitoring, E2E tests |
+| Sprint 5 | Task 14-15 | Optional: GBP EVENT + OFFER |
+
+---
+
+## 13. Definition of Done — MVP
+
+ה-MVP נחשב מוכן כשכל התנאים מתקיימים:
+
+- [ ] אפשר ליצור ולפרסם פוסט מאותו UI ל-IG, FB, GBP
+- [ ] GBP תומך בטקסט בלבד וגם טקסט + תמונה
+- [ ] תמיכה במיקום Google ברמת שורה (`google_location_id`)
+- [ ] פוסט אחד יכול להסתיים ב-`PARTIAL`
+- [ ] יש retry נפרד לערוץ שנכשל
+- [ ] שורות AI נכנסות דרך Google Sheets בלי צורך בהתאמה ידנית
+- [ ] IG/FB הישנים לא נשברו (backward compatible)
+- [ ] יש לוגים טובים ודיבוג סביר
+- [ ] יש rollout בטוח ל-GBP עם feature flag
+
+---
+
+## 14. סיכום טכני
 
 | נושא | פרטים |
 |------|--------|
@@ -500,11 +666,12 @@ GBP_REFRESH_TOKEN=...
 | **Framework** | Flask |
 | **DB** | Google Sheets (ללא שינוי) |
 | **מדיה** | Google Drive → Cloudinary (ללא שינוי) |
-| **APIs חדשים** | Google Business Profile API |
+| **APIs חדשים** | Google Business Profile API (OAuth 2.0) |
 | **APIs קיימים** | Meta Graph API (IG + FB) — ללא שינוי |
 | **דיפלוי** | Render (ללא שינוי) |
-| **ערוצים בשלב 1** | IG, FB, GBP |
+| **ערוצים ב-MVP** | IG, FB, GBP (STANDARD only) |
 | **ערוצים עתידיים אפשריים** | LinkedIn, Twitter/X, TikTok, Pinterest |
+| **GBP MVP** | STANDARD בלבד, EVENT/OFFER אחרי ייצוב |
 
 ### עיקרון מנחה
 > **הוספת ערוץ חדש = קובץ Python חדש בתיקיית `channels/` + רישום ב-Registry.**
@@ -512,14 +679,21 @@ GBP_REFRESH_TOKEN=...
 
 ---
 
-## 13. שאלות פתוחות לבירור עם הלקוח
+## 15. החלטות מוצר/טכניקה שנקבעו
 
-1. **אימות GBP:** יש לבצע POC עם OAuth 2.0 מול החשבון העסקי. האם יש גישה פעילה ל-GBP API?
-2. **אישור פרויקט Google:** האם הפרויקט ב-Google Cloud אושר לשימוש ב-Business Profile API? (ללא אישור — 0 QPM)
-3. **סוג פוסט GBP:** נתחיל עם STANDARD בלבד. האם EVENT ו-OFFER נדרשים לגרסה הראשונה?
-4. **תמונות GBP:** האם כל פוסט ב-GBP חייב תמונה, או שאפשר גם טקסט בלבד?
-5. **מספר Locations:** האם הלקוח מנהל מיקום אחד או כמה (multi-location)?
-6. **פורמט ה-Sheets:** האם מערכת ה-AI יכולה לעבוד לפי Data Contract (סעיף 6.2) — כולל `caption_gbp`, `gbp_post_type`, `source`?
-7. **Retry:** ב-MVP נתחיל עם retry ידני בלבד. האם יש צורך דחוף ב-retry אוטומטי?
-8. **התראות:** האם להרחיב את התראות הטלגרם גם ל-GBP?
-9. **Timezone:** האם `scheduled_time` צריך להיות תמיד Asia/Jerusalem, או שנדרש timezone דינמי?
+1. **UI label vs API:** ב-UI מציגים "עדכון", בבקאנד ממפים ל-`STANDARD`
+2. **אימות GBP:** OAuth 2.0 בלבד. Service Account רק לאחר POC
+3. **Multi-location:** `google_location_id` ברמת שורה, לא env var גלובלי
+4. **Retry:** פר ערוץ, לא לכל הפוסט
+5. **Status:** `PROCESSING` (מחליף `IN_PROGRESS`) + `DRAFT` + `PARTIAL` חדשים
+6. **GBP MVP:** רק `STANDARD`. EVENT/OFFER אחרי ייצוב
+7. **טקסט בלבד:** GBP תומך בפוסט בלי תמונה
+
+---
+
+## 16. שאלות פתוחות לבירור עם הלקוח
+
+1. **אימות GBP:** האם יש גישה פעילה ל-GBP API? האם הפרויקט ב-Google Cloud אושר?
+2. **פורמט ה-Sheets:** האם מערכת ה-AI יכולה לעבוד לפי Data Contract (סעיף 6.2)?
+3. **התראות:** האם להרחיב את התראות הטלגרם גם ל-GBP?
+4. **Timezone:** האם `scheduled_time` תמיד Asia/Jerusalem?
