@@ -694,57 +694,81 @@ def _check_cloudinary() -> dict:
 
 META_API_VERSION_WARN_DAYS = int(os.environ.get("META_API_VERSION_WARN_DAYS", "30"))
 
+# תאריכי תפוגה ידועים של גרסאות Meta Graph API (fallback)
+# מקור: https://developers.facebook.com/docs/graph-api/changelog/
+# כל גרסה חיה כשנתיים מיום השחרור
+_META_VERSION_EXPIRY = {
+    "v16.0": "2024-05-22",
+    "v17.0": "2024-09-14",
+    "v18.0": "2025-01-23",
+    "v19.0": "2025-05-13",
+    "v20.0": "2025-09-17",
+    "v21.0": "2026-01-21",
+    "v22.0": "2026-05-20",
+    "v23.0": "2026-09-16",
+}
+
+
+def _get_version_expiry(version: str) -> str | None:
+    """מחזיר תאריך תפוגה ידוע לגרסה, או None."""
+    return _META_VERSION_EXPIRY.get(version) or _META_VERSION_EXPIRY.get("v" + version.lstrip("v"))
+
+
 def _check_meta_api_version() -> dict:
     """בדיקת תוקף גרסת Meta Graph API — מחזיר ימים עד תפוגה."""
     meta_api_version = os.environ.get("META_API_VERSION", "v21.0")
+
+    expiry_str = None
+
+    # ── ניסיון 1: API ──
     try:
-        # Meta's Platform Versioning API
         resp = http_requests.get(
             "https://graph.facebook.com/api_versioning",
             params={"access_token": os.environ.get("FB_PAGE_ACCESS_TOKEN", "")},
             timeout=10,
         )
-        if not resp.ok:
-            return {"status": "ok", "version": meta_api_version, "note": "Could not fetch version info"}
+        if resp.ok:
+            versions = resp.json().get("data", [])
+            for v in versions:
+                if v.get("gl_api_version") in (meta_api_version, meta_api_version.lstrip("v")):
+                    expiry_str = (v.get("gl_end_date") or v.get("end_date") or "")[:10] or None
+                    break
+    except Exception as e:
+        logger.debug(f"Meta API versioning endpoint failed: {e}")
 
-        versions = resp.json().get("data", [])
-        current = None
-        for v in versions:
-            if v.get("gl_api_version") == meta_api_version or v.get("gl_api_version") == meta_api_version.lstrip("v"):
-                current = v
-                break
+    # ── ניסיון 2: fallback לתאריכים ידועים ──
+    if not expiry_str:
+        expiry_str = _get_version_expiry(meta_api_version)
 
-        if not current:
-            return {"status": "ok", "version": meta_api_version, "note": "Version not found in API response"}
-
-        # Parse expiry (end date of the version)
-        expiry_str = current.get("gl_end_date") or current.get("end_date")
-        if not expiry_str:
-            return {"status": "ok", "version": meta_api_version}
-
-        expiry_date = datetime.strptime(expiry_str[:10], "%Y-%m-%d").replace(tzinfo=timezone.utc)
-        now = datetime.now(timezone.utc)
-        days_left = (expiry_date - now).days
-
-        result = {
+    # ── אם אין מידע בכלל ──
+    if not expiry_str:
+        return {
+            "status": "warning",
             "version": meta_api_version,
-            "expiry": expiry_str[:10],
-            "days_left": days_left,
+            "error": f"Unknown expiry for {meta_api_version} — update _META_VERSION_EXPIRY",
+            "days_left": -1,
         }
 
-        if days_left < 0:
-            result["status"] = "error"
-            result["error"] = f"API version {meta_api_version} has expired!"
-        elif days_left <= META_API_VERSION_WARN_DAYS:
-            result["status"] = "warning"
-        else:
-            result["status"] = "ok"
+    # ── חישוב ימים ──
+    expiry_date = datetime.strptime(expiry_str, "%Y-%m-%d").replace(tzinfo=timezone.utc)
+    now = datetime.now(timezone.utc)
+    days_left = (expiry_date - now).days
 
-        return result
+    result = {
+        "version": meta_api_version,
+        "expiry": expiry_str,
+        "days_left": days_left,
+    }
 
-    except Exception as e:
-        # Don't fail health check if version check fails
-        return {"status": "ok", "version": meta_api_version, "note": f"Check failed: {str(e)[:100]}"}
+    if days_left < 0:
+        result["status"] = "error"
+        result["error"] = f"API version {meta_api_version} has expired!"
+    elif days_left <= META_API_VERSION_WARN_DAYS:
+        result["status"] = "warning"
+    else:
+        result["status"] = "ok"
+
+    return result
 
 
 def _check_meta_token(token_name: str, token: str) -> dict:
