@@ -1040,12 +1040,52 @@ body {
   color: var(--color-error);
 }
 
+/* ─── Stats Bar (collapsible) ───────────────────────────────── */
+.stats-bar {
+  margin-block-end: var(--space-xl);
+}
+
+.stats-toggle {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  padding: var(--space-xs) 0;
+  background: none;
+  border: none;
+  cursor: pointer;
+  color: var(--color-text-secondary);
+  font-family: var(--font-family);
+  font-size: var(--font-size-sm);
+  font-weight: 500;
+  transition: color var(--transition-fast);
+}
+
+.stats-toggle:hover {
+  color: var(--color-text-primary);
+}
+
+.stats-toggle-arrow {
+  font-size: 10px;
+  transition: transform var(--transition-fast);
+}
+
+.stats-bar.collapsed .stats-toggle-arrow {
+  transform: rotate(-90deg);
+}
+
+.stats-content {
+  transition: all var(--transition-normal);
+}
+
+.stats-bar.collapsed .stats-content {
+  display: none;
+}
+
 /* ─── Stats Row ─────────────────────────────────────────────── */
 .stats-row {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
   gap: var(--space-base);
-  margin-block-end: var(--space-xl);
 }
 
 .stat-card {
