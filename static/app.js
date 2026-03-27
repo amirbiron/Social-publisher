@@ -145,6 +145,22 @@ function clearFilters() {
   renderPosts();
 }
 
+// ─── Collapsible Stats Bar ───────────────────────────────────
+function toggleStatsBar() {
+  const bar = document.getElementById('stats-bar');
+  const collapsed = bar.classList.toggle('collapsed');
+  try { localStorage.setItem('sp-stats-collapsed', collapsed ? '1' : '0'); } catch (e) {}
+}
+
+// Restore stats bar state on load
+(function() {
+  try {
+    if (localStorage.getItem('sp-stats-collapsed') === '1') {
+      document.getElementById('stats-bar').classList.add('collapsed');
+    }
+  } catch (e) {}
+})();
+
 // ─── Collapsible Filter Bar ──────────────────────────────────
 function toggleFilterBar() {
   const bar = document.getElementById('filter-bar');

@@ -43,22 +43,30 @@
   <main class="main-content">
 
     <!-- ─── Stats ─── -->
-    <div class="stats-row" id="stats-row">
-      <div class="stat-card">
-        <span class="stat-value" id="stat-total">0</span>
-        <span class="stat-label">סה"כ פוסטים</span>
-      </div>
-      <div class="stat-card">
-        <span class="stat-value" id="stat-ready" style="color: var(--color-accent)">0</span>
-        <span class="stat-label">ממתינים</span>
-      </div>
-      <div class="stat-card">
-        <span class="stat-value" id="stat-posted" style="color: var(--color-success)">0</span>
-        <span class="stat-label">פורסמו</span>
-      </div>
-      <div class="stat-card">
-        <span class="stat-value" id="stat-error" style="color: var(--color-error)">0</span>
-        <span class="stat-label">שגיאות</span>
+    <div class="stats-bar" id="stats-bar">
+      <button class="stats-toggle" onclick="toggleStatsBar()" id="stats-toggle" title="סטטיסטיקות">
+        <span class="stats-toggle-label">סטטיסטיקות</span>
+        <span class="stats-toggle-arrow" id="stats-toggle-arrow">&#9660;</span>
+      </button>
+      <div class="stats-content" id="stats-content">
+        <div class="stats-row" id="stats-row">
+          <div class="stat-card">
+            <span class="stat-value" id="stat-total">0</span>
+            <span class="stat-label">סה"כ פוסטים</span>
+          </div>
+          <div class="stat-card">
+            <span class="stat-value" id="stat-ready" style="color: var(--color-accent)">0</span>
+            <span class="stat-label">ממתינים</span>
+          </div>
+          <div class="stat-card">
+            <span class="stat-value" id="stat-posted" style="color: var(--color-success)">0</span>
+            <span class="stat-label">פורסמו</span>
+          </div>
+          <div class="stat-card">
+            <span class="stat-value" id="stat-error" style="color: var(--color-error)">0</span>
+            <span class="stat-label">שגיאות</span>
+          </div>
+        </div>
       </div>
     </div>
 
