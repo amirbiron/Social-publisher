@@ -891,11 +891,15 @@ def _maybe_run_daily_version_check():
             result = _check_meta_api_version()
             logger.info(f"Daily Meta API version check: {result}")
             if result.get("status") in ("warning", "error"):
-                notify_meta_api_version_expiry(
-                    result.get("version", "?"),
-                    result.get("expiry", "?"),
-                    result.get("days_left", 0),
-                )
+                now_inner = datetime.now(timezone.utc)
+                last_sent = _health_notify_cooldown.get("meta_api_version")
+                if last_sent is None or (now_inner - last_sent).total_seconds() >= _DAILY_CHECK_INTERVAL:
+                    notify_meta_api_version_expiry(
+                        result.get("version", "?"),
+                        result.get("expiry", "?"),
+                        result.get("days_left", 0),
+                    )
+                    _health_notify_cooldown["meta_api_version"] = now_inner
         except Exception as e:
             logger.warning(f"Daily Meta API version check failed: {e}")
 
