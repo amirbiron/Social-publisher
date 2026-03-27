@@ -651,7 +651,7 @@ async function copyCaptionText() {
 function toggleFileIds() {
   showFileIds = !showFileIds;
   const arrow = document.getElementById('file-id-toggle-arrow');
-  if (arrow) arrow.innerHTML = showFileIds ? '&#9660;' : '&#9654;';
+  if (arrow) arrow.innerHTML = showFileIds ? '&#9660;' : '&#9664;';
   renderPosts();
 }
 
