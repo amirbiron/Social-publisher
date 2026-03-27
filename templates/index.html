@@ -12,7 +12,11 @@
   <!-- ═══ Sidebar ═══ -->
   <aside class="sidebar" id="sidebar">
     <div class="sidebar-header">
-      <div class="sidebar-logo">SP</div>
+      <div class="sidebar-logo" id="sidebar-logo" onclick="document.getElementById('logo-upload').click()" title="לחצי להחלפת לוגו">
+        <span class="sidebar-logo-text" id="sidebar-logo-text">SP</span>
+        <img class="sidebar-logo-img hidden" id="sidebar-logo-img" alt="לוגו">
+      </div>
+      <input type="file" id="logo-upload" accept="image/*" style="display:none" onchange="handleLogoUpload(event)">
       <span class="sidebar-title">Social Publisher</span>
     </div>
 

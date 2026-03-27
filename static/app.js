@@ -145,6 +145,51 @@ function clearFilters() {
   renderPosts();
 }
 
+// ─── Custom Logo Upload ──────────────────────────────────────
+function handleLogoUpload(event) {
+  const file = event.target.files[0];
+  if (!file) return;
+  event.target.value = '';
+  const reader = new FileReader();
+  reader.onload = function(e) {
+    const img = new Image();
+    img.onload = function() {
+      const MAX = 128;
+      const canvas = document.createElement('canvas');
+      canvas.width = MAX;
+      canvas.height = MAX;
+      const ctx = canvas.getContext('2d');
+      const size = Math.min(img.width, img.height);
+      const sx = (img.width - size) / 2;
+      const sy = (img.height - size) / 2;
+      ctx.drawImage(img, sx, sy, size, size, 0, 0, MAX, MAX);
+      const compressed = canvas.toDataURL('image/jpeg', 0.8);
+      applyLogoImage(compressed);
+      try { localStorage.setItem('sp-custom-logo', compressed); } catch (err) {}
+    };
+    img.src = e.target.result;
+  };
+  reader.readAsDataURL(file);
+}
+
+function applyLogoImage(dataUrl) {
+  const logo = document.getElementById('sidebar-logo');
+  const img = document.getElementById('sidebar-logo-img');
+  const text = document.getElementById('sidebar-logo-text');
+  img.src = dataUrl;
+  img.classList.remove('hidden');
+  text.style.display = 'none';
+  logo.classList.add('has-image');
+}
+
+// Restore custom logo on load
+(function() {
+  try {
+    const saved = localStorage.getItem('sp-custom-logo');
+    if (saved) applyLogoImage(saved);
+  } catch (e) {}
+})();
+
 // ─── Collapsible Stats Bar ───────────────────────────────────
 function toggleStatsBar() {
   const bar = document.getElementById('stats-bar');
