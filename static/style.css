@@ -661,7 +661,7 @@ body {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  max-width: 100px;
+  max-width: 60px;
 }
 
 /* ─── Posts Table ────────────────────────────────────────────── */
@@ -708,6 +708,11 @@ body {
 
 .posts-table tr:hover td {
   background: var(--color-bg-hover);
+}
+
+.posts-table .cell-file {
+  max-width: 100px;
+  width: 100px;
 }
 
 .posts-table .cell-caption {
