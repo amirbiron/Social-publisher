@@ -732,7 +732,7 @@ def _check_meta_api_version() -> dict:
             "days_left": days_left,
         }
 
-        if days_left <= 0:
+        if days_left < 0:
             result["status"] = "error"
             result["error"] = f"API version {meta_api_version} has expired!"
         elif days_left <= META_API_VERSION_WARN_DAYS:
@@ -867,39 +867,32 @@ def api_config():
 
 _DAILY_CHECK_INTERVAL = 24 * 60 * 60  # 24 hours
 
-def _daily_meta_version_check():
-    """בדיקה יומית של גרסת Meta API — רצה ברקע."""
-    while True:
+
+_last_daily_version_check: datetime | None = None
+
+@app.before_request
+def _maybe_run_daily_version_check():
+    """בדיקה יומית של גרסת Meta API — רצה פעם ב-24 שעות על בקשה ראשונה."""
+    global _last_daily_version_check
+    now = datetime.now(timezone.utc)
+    if _last_daily_version_check and (now - _last_daily_version_check).total_seconds() < _DAILY_CHECK_INTERVAL:
+        return
+    _last_daily_version_check = now
+
+    def _run():
         try:
             result = _check_meta_api_version()
             logger.info(f"Daily Meta API version check: {result}")
             if result.get("status") in ("warning", "error"):
-                last_sent = _health_notify_cooldown.get("meta_api_version_daily")
-                now = datetime.now(timezone.utc)
-                if last_sent is None or (now - last_sent).total_seconds() >= _DAILY_CHECK_INTERVAL:
-                    notify_meta_api_version_expiry(
-                        result.get("version", "?"),
-                        result.get("expiry", "?"),
-                        result.get("days_left", 0),
-                    )
-                    _health_notify_cooldown["meta_api_version_daily"] = now
+                notify_meta_api_version_expiry(
+                    result.get("version", "?"),
+                    result.get("expiry", "?"),
+                    result.get("days_left", 0),
+                )
         except Exception as e:
             logger.warning(f"Daily Meta API version check failed: {e}")
-        threading.Event().wait(_DAILY_CHECK_INTERVAL)
 
-
-def _start_daily_checks():
-    """מפעיל את הבדיקות היומיות ב-thread ברקע."""
-    t = threading.Thread(target=_daily_meta_version_check, daemon=True)
-    t.start()
-    logger.info("Daily Meta API version check started")
-
-
-# ═══════════════════════════════════════════════════════════════
-#  Main
-# ═══════════════════════════════════════════════════════════════
-
-_start_daily_checks()
+    threading.Thread(target=_run, daemon=True).start()
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", "8080"))
