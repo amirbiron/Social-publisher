@@ -710,10 +710,6 @@ body {
   background: var(--color-bg-hover);
 }
 
-.posts-table .cell-file {
-  max-width: 100px;
-  width: 100px;
-}
 
 /* ─── Pagination ─────────────────────────────────────────────── */
 .pagination {
