@@ -52,7 +52,7 @@ from google_api import (
     drive_list_folder,
     get_drive_service,
 )
-from notifications import notify_health_issue, notify_meta_api_version_expiry
+from notifications import notify_health_issue, notify_meta_api_version_expiry, notify_meta_api_version_unknown
 
 # ─── Logging ─────────────────────────────────────────────────
 logging.basicConfig(
@@ -736,14 +736,21 @@ def _check_meta_api_version() -> dict:
     # ── אם אין מידע בכלל ──
     if not expiry_str:
         return {
-            "status": "warning",
+            "status": "unknown",
             "version": meta_api_version,
-            "error": f"Unknown expiry for {meta_api_version} — update _META_VERSION_EXPIRY",
-            "days_left": -1,
+            "note": f"Could not determine expiry for {meta_api_version}",
         }
 
     # ── חישוב ימים ──
-    expiry_date = datetime.strptime(expiry_str, "%Y-%m-%d").replace(tzinfo=timezone.utc)
+    try:
+        expiry_date = datetime.strptime(expiry_str, "%Y-%m-%d").replace(tzinfo=timezone.utc)
+    except ValueError:
+        return {
+            "status": "unknown",
+            "version": meta_api_version,
+            "note": f"Invalid expiry date format: {expiry_str}",
+        }
+
     now = datetime.now(timezone.utc)
     days_left = (expiry_date - now).days
 
@@ -818,9 +825,9 @@ def api_health():
             except Exception as e:
                 checks[name] = {"status": "error", "error": str(e)[:200]}
 
-    # meta_api_version warning לא נחשב כ-unhealthy
+    # meta_api_version warning/unknown לא נחשב כ-unhealthy
     all_ok = all(
-        c["status"] in ("ok", "warning") if name == "meta_api_version" else c["status"] == "ok"
+        c["status"] in ("ok", "warning", "unknown") if name == "meta_api_version" else c["status"] == "ok"
         for name, c in checks.items()
     )
     status_code = 200 if all_ok else 503
@@ -834,6 +841,11 @@ def api_health():
                 notify_meta_api_version_expiry(
                     check.get("version", "?"), check.get("expiry", "?"), check.get("days_left", 0)
                 )
+                _health_notify_cooldown["meta_api_version"] = now
+        elif name == "meta_api_version" and check["status"] == "unknown":
+            last_sent = _health_notify_cooldown.get("meta_api_version")
+            if last_sent is None or (now - last_sent).total_seconds() >= HEALTH_NOTIFY_COOLDOWN_SECONDS:
+                notify_meta_api_version_unknown(check.get("version", "?"))
                 _health_notify_cooldown["meta_api_version"] = now
         elif check["status"] == "error":
             last_sent = _health_notify_cooldown.get(name)
@@ -907,16 +919,21 @@ def _maybe_run_daily_version_check():
         try:
             result = _check_meta_api_version()
             logger.info(f"Daily Meta API version check: {result}")
-            if result.get("status") in ("warning", "error"):
-                now_inner = datetime.now(timezone.utc)
-                last_sent = _health_notify_cooldown.get("meta_api_version")
-                if last_sent is None or (now_inner - last_sent).total_seconds() >= _DAILY_CHECK_INTERVAL:
-                    notify_meta_api_version_expiry(
-                        result.get("version", "?"),
-                        result.get("expiry", "?"),
-                        result.get("days_left", 0),
-                    )
-                    _health_notify_cooldown["meta_api_version"] = now_inner
+            status = result.get("status")
+            now_inner = datetime.now(timezone.utc)
+            last_sent = _health_notify_cooldown.get("meta_api_version")
+            if last_sent and (now_inner - last_sent).total_seconds() < _DAILY_CHECK_INTERVAL:
+                return
+            if status in ("warning", "error"):
+                notify_meta_api_version_expiry(
+                    result.get("version", "?"),
+                    result.get("expiry", "?"),
+                    result.get("days_left", 0),
+                )
+                _health_notify_cooldown["meta_api_version"] = now_inner
+            elif status == "unknown":
+                notify_meta_api_version_unknown(result.get("version", "?"))
+                _health_notify_cooldown["meta_api_version"] = now_inner
         except Exception as e:
             logger.warning(f"Daily Meta API version check failed: {e}")
 

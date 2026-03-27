@@ -114,6 +114,20 @@ def notify_meta_api_version_expiry(version: str, expiry_date: str, days_left: in
     send_telegram("\n".join(lines))
 
 
+def notify_meta_api_version_unknown(version: str):
+    """התראה שלא ניתן לבדוק תפוגת גרסת Meta API."""
+    lines = [
+        "<b>ℹ️ לא ניתן לבדוק תפוגת גרסת Meta API</b>",
+    ]
+    if CLIENT_NAME:
+        lines.append(f"<b>לקוח:</b> {html.escape(CLIENT_NAME)}")
+    lines.append(f"<b>גרסה:</b> {html.escape(version)}")
+    lines.append("יש לבדוק ידנית ב: https://developers.facebook.com/docs/graph-api/changelog/")
+    if REPO_URL:
+        lines.append(f"<b>ריפו:</b> {html.escape(REPO_URL)}")
+    send_telegram("\n".join(lines))
+
+
 def _truncate(text: str, max_len: int) -> str:
     """קיצור טקסט ארוך."""
     if len(text) > max_len:
