@@ -155,6 +155,24 @@ body {
   font-weight: 700;
   font-size: var(--font-size-md);
   flex-shrink: 0;
+  cursor: pointer;
+  overflow: hidden;
+  position: relative;
+  transition: opacity var(--transition-fast);
+}
+
+.sidebar-logo:hover {
+  opacity: 0.8;
+}
+
+.sidebar-logo-img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.sidebar-logo-img.hidden {
+  display: none;
 }
 
 .sidebar-title {

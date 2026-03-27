@@ -145,6 +145,35 @@ function clearFilters() {
   renderPosts();
 }
 
+// ─── Custom Logo Upload ──────────────────────────────────────
+function handleLogoUpload(event) {
+  const file = event.target.files[0];
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = function(e) {
+    const dataUrl = e.target.result;
+    applyLogoImage(dataUrl);
+    try { localStorage.setItem('sp-custom-logo', dataUrl); } catch (err) {}
+  };
+  reader.readAsDataURL(file);
+}
+
+function applyLogoImage(dataUrl) {
+  const img = document.getElementById('sidebar-logo-img');
+  const text = document.getElementById('sidebar-logo-text');
+  img.src = dataUrl;
+  img.classList.remove('hidden');
+  text.style.display = 'none';
+}
+
+// Restore custom logo on load
+(function() {
+  try {
+    const saved = localStorage.getItem('sp-custom-logo');
+    if (saved) applyLogoImage(saved);
+  } catch (e) {}
+})();
+
 // ─── Collapsible Stats Bar ───────────────────────────────────
 function toggleStatsBar() {
   const bar = document.getElementById('stats-bar');
