@@ -171,6 +171,7 @@ function renderPosts() {
     }
     hideElement('posts-table-wrapper');
     if (cardsEl) cardsEl.classList.add('hidden');
+    removePagination();
 
     // Show "no results" only when filters are active but no posts match
     if (posts.length > 0 && filtered.length === 0) {
@@ -325,9 +326,12 @@ function renderPosts() {
   renderPagination(totalPages, sorted.length);
 }
 
-function renderPagination(totalPages, totalItems) {
-  // Remove existing pagination elements
+function removePagination() {
   document.querySelectorAll('.pagination').forEach(el => el.remove());
+}
+
+function renderPagination(totalPages, totalItems) {
+  removePagination();
 
   if (totalPages <= 1) return;
 
@@ -337,15 +341,9 @@ function renderPagination(totalPages, totalItems) {
     <button class="btn btn-ghost btn-sm" onclick="goToPage(${currentPage + 1})" ${currentPage >= totalPages ? 'disabled' : ''}>הבא &raquo;</button>
   </div>`;
 
-  // Add after table
-  const tableWrapper = document.getElementById('posts-table-wrapper');
-  if (tableWrapper) tableWrapper.insertAdjacentHTML('afterend', html);
-
-  // Add after mobile cards
-  const cardsEl = document.getElementById('posts-cards');
-  if (cardsEl && !cardsEl.classList.contains('hidden')) {
-    cardsEl.insertAdjacentHTML('afterend', html);
-  }
+  // Single pagination element at the end of the posts view
+  const postsView = document.getElementById('view-posts');
+  if (postsView) postsView.insertAdjacentHTML('beforeend', html);
 }
 
 function goToPage(page) {
