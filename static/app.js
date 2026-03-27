@@ -432,6 +432,28 @@ function updateStats() {
 }
 
 // ─── Shared Form Setup ───────────────────────────────────────
+// ─── Network ↔ Post Type Sync ────────────────────────────────
+function onNetworkChange() {
+  const network = document.getElementById('form-network').value;
+  const postTypeSelect = document.getElementById('form-post-type');
+  const isFbOnly = network === 'FB';
+
+  if (isFbOnly) {
+    postTypeSelect.value = 'FEED';
+    postTypeSelect.disabled = true;
+    postTypeSelect.closest('.form-group').querySelector('.form-label').textContent = 'סוג פוסט';
+    postTypeSelect.innerHTML = '<option value="FEED">תמונה / וידאו</option>';
+  } else {
+    postTypeSelect.disabled = false;
+    postTypeSelect.closest('.form-group').querySelector('.form-label').textContent = 'סוג פוסט';
+    postTypeSelect.innerHTML =
+      '<option value="FEED">פיד (תמונה/וידאו)</option>' +
+      '<option value="REELS">ריל (וידאו)</option>';
+  }
+}
+
+function onPostTypeChange() {}
+
 function resetPostForm({ title, rowNumber = '', network = 'IG+FB', postType = 'FEED',
                          publishAt = '', captionIg = '', captionFb = '',
                          driveFileId = '', postId = null } = {}) {
@@ -439,6 +461,7 @@ function resetPostForm({ title, rowNumber = '', network = 'IG+FB', postType = 'F
   document.getElementById('post-modal-title').textContent = title;
   document.getElementById('form-row-number').value = rowNumber;
   document.getElementById('form-network').value = network;
+  onNetworkChange();
   document.getElementById('form-post-type').value = postType;
   document.getElementById('form-publish-at').value = publishAt;
   document.getElementById('form-caption-ig').value = captionIg;

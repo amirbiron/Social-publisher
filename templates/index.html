@@ -201,15 +201,15 @@
       <div class="form-row">
         <div class="form-group">
           <label class="form-label">רשת</label>
-          <select class="form-select" id="form-network">
+          <select class="form-select" id="form-network" onchange="onNetworkChange()">
             <option value="IG+FB">אינסטגרם + פייסבוק</option>
             <option value="IG">אינסטגרם בלבד</option>
             <option value="FB">פייסבוק בלבד</option>
           </select>
         </div>
-        <div class="form-group">
+        <div class="form-group" id="post-type-group">
           <label class="form-label">סוג פוסט</label>
-          <select class="form-select" id="form-post-type">
+          <select class="form-select" id="form-post-type" onchange="onPostTypeChange()">
             <option value="FEED">פיד (תמונה/וידאו)</option>
             <option value="REELS">ריל (וידאו)</option>
           </select>
