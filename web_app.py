@@ -114,19 +114,51 @@ def _validate_media_background(
             logger.info(f"Post {row_id}: Media changed during validation, skipping stale result")
             return
 
-        # ולידציה עברה — אם הפוסט סומן ERROR מולידציה קודמת, מחזירים ל-READY
+        # ולידציה עברה — אם הפוסט סומן ERROR *מולידציה מקדימה*, מחזירים ל-READY
+        # לא מאפסים שגיאות שמקורן ב-Cron/Meta API (למשל טוקן פג, כישלון פרסום)
         current_status = _read_fresh_status(sheet_row_number, header)
         if current_status == STATUS_ERROR:
-            sheets_update_cells(
-                sheet_row_number,
-                {COL_STATUS: STATUS_READY, COL_ERROR: ""},
-                header,
-            )
-            logger.info(f"Post {row_id}: Media validation passed — status reset to READY")
+            current_error = _read_fresh_error(sheet_row_number, header)
+            if _is_media_validation_error(current_error):
+                sheets_update_cells(
+                    sheet_row_number,
+                    {COL_STATUS: STATUS_READY, COL_ERROR: ""},
+                    header,
+                )
+                logger.info(f"Post {row_id}: Media validation passed — status reset to READY")
+            else:
+                logger.info(f"Post {row_id}: Media validation passed, but keeping publisher error: {current_error[:80]}")
         else:
             logger.info(f"Post {row_id}: Media validation passed")
     except Exception as e:
         logger.error(f"Post {row_id}: Media validation error: {e}", exc_info=True)
+
+
+# Hebrew prefixes used by validate_media_pre_publish — used to distinguish
+# media validation errors from publisher/API errors set by the cron job.
+_MEDIA_VALIDATION_PREFIXES = (
+    "תמונה לא תקינה",
+    "התמונה גדולה מדי",
+    "סרטון לא תקין",
+    "הסרטון גדול מדי",
+    "הסרטון קצר מדי",
+    "הסרטון ארוך מדי",
+)
+
+
+def _is_media_validation_error(error_msg: str) -> bool:
+    """בודק אם הודעת שגיאה מקורה בוולידציה מקדימה (ולא מה-Cron/Meta API)."""
+    return any(error_msg.startswith(prefix) for prefix in _MEDIA_VALIDATION_PREFIXES)
+
+
+def _read_fresh_error(sheet_row_number: int, header: list[str]) -> str:
+    """קורא את שדה השגיאה הנוכחי של שורה מהטבלה."""
+    try:
+        fresh_row = sheets_read_row(sheet_row_number)
+        error_idx = header.index(COL_ERROR)
+        return fresh_row[error_idx].strip() if error_idx < len(fresh_row) else ""
+    except (ValueError, IndexError):
+        return ""
 
 
 def _read_fresh_status(sheet_row_number: int, header: list[str]) -> str:
