@@ -656,6 +656,7 @@ _health_notify_cooldown: dict[str, datetime] = {}  # {service_name: last_notifie
 # Cache: תוצאת health check נשמרת למשך 60 שניות למניעת ניצול API quotas
 HEALTH_CACHE_TTL_SECONDS = int(os.environ.get("HEALTH_CACHE_TTL_SECONDS", "60"))
 _health_cache: dict = {}  # {"result": ..., "status_code": ..., "timestamp": datetime}
+_notify_lock = threading.Lock()
 
 def _check_google_sheets() -> dict:
     """בדיקת חיבור ל-Google Sheets — קורא רק את שורת ה-header."""
@@ -834,34 +835,33 @@ def api_health():
 
     # שליחת התראות טלגרם על שירותים שנפלו (עם cooldown למניעת ספאם)
     now = datetime.now(timezone.utc)
-    for name, check in checks.items():
-        if name == "meta_api_version" and check["status"] in ("warning", "error"):
-            last_sent = _health_notify_cooldown.get("meta_api_version")
-            if last_sent is None or (now - last_sent).total_seconds() >= HEALTH_NOTIFY_COOLDOWN_SECONDS:
-                notify_meta_api_version_expiry(
-                    check.get("version", "?"), check.get("expiry", "?"), check.get("days_left", 0)
-                )
-                _health_notify_cooldown["meta_api_version"] = now
-        elif name == "meta_api_version" and check["status"] == "unknown":
-            last_sent = _health_notify_cooldown.get("meta_api_version")
-            if last_sent is None or (now - last_sent).total_seconds() >= HEALTH_NOTIFY_COOLDOWN_SECONDS:
-                notify_meta_api_version_unknown(check.get("version", "?"))
-                _health_notify_cooldown["meta_api_version"] = now
-        elif check["status"] == "error":
-            last_sent = _health_notify_cooldown.get(name)
-            if last_sent is None or (now - last_sent).total_seconds() >= HEALTH_NOTIFY_COOLDOWN_SECONDS:
-                notify_health_issue(name, check.get("error", "Unknown"))
-                _health_notify_cooldown[name] = now
+    with _notify_lock:
+        for name, check in checks.items():
+            if name == "meta_api_version" and check["status"] in ("warning", "error"):
+                last_sent = _health_notify_cooldown.get("meta_api_version")
+                if last_sent is None or (now - last_sent).total_seconds() >= HEALTH_NOTIFY_COOLDOWN_SECONDS:
+                    notify_meta_api_version_expiry(
+                        check.get("version", "?"), check.get("expiry", "?"), check.get("days_left", 0)
+                    )
+                    _health_notify_cooldown["meta_api_version"] = now
+            elif name == "meta_api_version" and check["status"] == "unknown":
+                last_sent = _health_notify_cooldown.get("meta_api_version")
+                if last_sent is None or (now - last_sent).total_seconds() >= HEALTH_NOTIFY_COOLDOWN_SECONDS:
+                    notify_meta_api_version_unknown(check.get("version", "?"))
+                    _health_notify_cooldown["meta_api_version"] = now
+            elif check["status"] == "error":
+                last_sent = _health_notify_cooldown.get(name)
+                if last_sent is None or (now - last_sent).total_seconds() >= HEALTH_NOTIFY_COOLDOWN_SECONDS:
+                    notify_health_issue(name, check.get("error", "Unknown"))
+                    _health_notify_cooldown[name] = now
 
-    if all_ok:
-        # ניקוי cooldown לשירותים שחזרו לפעול — למעט meta_api_version שמנוהל בנפרד
-        for name in list(_health_notify_cooldown):
-            if name != "meta_api_version":
-                _health_notify_cooldown.pop(name)
-        # ניקוי meta_api_version cooldown רק אם הגרסה תקינה
-        meta_check = checks.get("meta_api_version", {})
-        if meta_check.get("status") == "ok":
-            _health_notify_cooldown.pop("meta_api_version", None)
+        if all_ok:
+            for name in list(_health_notify_cooldown):
+                if name != "meta_api_version":
+                    _health_notify_cooldown.pop(name)
+            meta_check = checks.get("meta_api_version", {})
+            if meta_check.get("status") == "ok":
+                _health_notify_cooldown.pop("meta_api_version", None)
 
     result = {
         "status": "healthy" if all_ok else "unhealthy",
@@ -920,20 +920,21 @@ def _maybe_run_daily_version_check():
             result = _check_meta_api_version()
             logger.info(f"Daily Meta API version check: {result}")
             status = result.get("status")
-            now_inner = datetime.now(timezone.utc)
-            last_sent = _health_notify_cooldown.get("meta_api_version")
-            if last_sent and (now_inner - last_sent).total_seconds() < _DAILY_CHECK_INTERVAL:
-                return
-            if status in ("warning", "error"):
-                notify_meta_api_version_expiry(
-                    result.get("version", "?"),
-                    result.get("expiry", "?"),
-                    result.get("days_left", 0),
-                )
-                _health_notify_cooldown["meta_api_version"] = now_inner
-            elif status == "unknown":
-                notify_meta_api_version_unknown(result.get("version", "?"))
-                _health_notify_cooldown["meta_api_version"] = now_inner
+            with _notify_lock:
+                now_inner = datetime.now(timezone.utc)
+                last_sent = _health_notify_cooldown.get("meta_api_version")
+                if last_sent and (now_inner - last_sent).total_seconds() < _DAILY_CHECK_INTERVAL:
+                    return
+                if status in ("warning", "error"):
+                    notify_meta_api_version_expiry(
+                        result.get("version", "?"),
+                        result.get("expiry", "?"),
+                        result.get("days_left", 0),
+                    )
+                    _health_notify_cooldown["meta_api_version"] = now_inner
+                elif status == "unknown":
+                    notify_meta_api_version_unknown(result.get("version", "?"))
+                    _health_notify_cooldown["meta_api_version"] = now_inner
         except Exception as e:
             logger.warning(f"Daily Meta API version check failed: {e}")
 
