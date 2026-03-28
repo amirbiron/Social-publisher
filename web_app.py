@@ -92,6 +92,10 @@ def _validate_media_background(
 
             error = validate_media_pre_publish(file_bytes, mime_type, post_type, network)
             if error:
+                # לפני סימון ERROR — בודקים שה-drive_file_id לא השתנה בינתיים
+                if _drive_ids_changed(sheet_row_number, drive_file_ids, header):
+                    logger.info(f"Post {row_id}: Media changed during validation, skipping stale result")
+                    return
                 logger.warning(f"Post {row_id}: Media validation failed: {error}")
                 sheets_update_cells(
                     sheet_row_number,
@@ -100,11 +104,16 @@ def _validate_media_background(
                 )
                 return
 
+        # לפני עדכון סטטוס — בודקים שה-drive_file_id לא השתנה בינתיים
+        if _drive_ids_changed(sheet_row_number, drive_file_ids, header):
+            logger.info(f"Post {row_id}: Media changed during validation, skipping stale result")
+            return
+
         # ולידציה עברה — אם הפוסט סומן ERROR מולידציה קודמת, מחזירים ל-READY
-        current_row = current_rows[sheet_row_number - 2] if (sheet_row_number - 2) < len(current_rows) else []
+        fresh_row = sheets_read_row(sheet_row_number)
         try:
             status_idx = header.index(COL_STATUS)
-            current_status = current_row[status_idx] if status_idx < len(current_row) else ""
+            current_status = fresh_row[status_idx] if status_idx < len(fresh_row) else ""
         except (ValueError, IndexError):
             current_status = ""
         if current_status.strip().upper() == STATUS_ERROR:
@@ -118,6 +127,18 @@ def _validate_media_background(
             logger.info(f"Post {row_id}: Media validation passed")
     except Exception as e:
         logger.error(f"Post {row_id}: Media validation error: {e}", exc_info=True)
+
+
+def _drive_ids_changed(sheet_row_number: int, original_ids: list[str], header: list[str]) -> bool:
+    """בודק אם ה-drive_file_id השתנה מאז תחילת הוולידציה."""
+    try:
+        fresh_row = sheets_read_row(sheet_row_number)
+        fid_idx = header.index(COL_DRIVE_FILE_ID)
+        current_fid = fresh_row[fid_idx] if fid_idx < len(fresh_row) else ""
+        current_ids = [f.strip() for f in current_fid.split(",") if f.strip()]
+        return current_ids != original_ids
+    except (ValueError, IndexError):
+        return False
 
 
 def _trigger_media_validation(data: dict, sheet_row_number: int, header: list[str], row_id: str):
@@ -532,7 +553,7 @@ def api_update_post(row_number):
                         merged[col] = existing_row[ci] if ci < len(existing_row) else ""
                     except (ValueError, IndexError):
                         merged[col] = ""
-            row_id = data.get("expected_id", str(row_number))
+            row_id = data.get("expected_id", "")
             _trigger_media_validation(merged, row_number, header, row_id)
 
         return jsonify({"success": True})
