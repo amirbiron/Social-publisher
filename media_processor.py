@@ -236,9 +236,11 @@ def _validate_video_pre_publish(
         max_dur = IG_REELS_MAX_DURATION if post_type == POST_TYPE_REELS else IG_VIDEO_MAX_DURATION
         label = "Reels" if post_type == POST_TYPE_REELS else "Instagram"
         if duration > max_dur:
-            minutes = int(duration // 60)
+            mins = int(duration // 60)
+            secs = int(duration % 60)
+            dur_str = f"{mins}:{secs:02d} דקות"
             return (
-                f"הסרטון ארוך מדי ל-{label} ({minutes} דקות). "
+                f"הסרטון ארוך מדי ל-{label} ({dur_str}). "
                 f"מקסימום {max_dur // 60} דקות"
             )
 
