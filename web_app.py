@@ -50,10 +50,10 @@ from google_api import (
     sheets_delete_row,
     col_letter_from_header,
     drive_list_folder,
-    drive_download_with_metadata,
+    drive_get_media_info,
     get_drive_service,
 )
-from media_processor import validate_media_pre_publish
+from media_processor import validate_media_from_metadata
 from notifications import notify_health_issue, notify_meta_api_version_expiry, notify_meta_api_version_unknown
 
 # ─── Logging ─────────────────────────────────────────────────
@@ -77,7 +77,7 @@ def _validate_media_background(
     header: list[str],
     row_id: str,
 ):
-    """הורדת מדיה מ-Drive ובדיקת תקינות ברקע — מסמן ERROR אם לא תקין."""
+    """בדיקת תקינות מדיה ברקע באמצעות Drive metadata (בלי הורדה) — מסמן ERROR אם לא תקין."""
     try:
         # אימות שהשורה עדיין מכילה את הפוסט הנכון (שורות יכולות לזוז אחרי מחיקה)
         _, current_rows = sheets_read_all_rows()
@@ -87,10 +87,22 @@ def _validate_media_background(
             return
 
         for fid in drive_file_ids:
-            file_bytes, metadata = drive_download_with_metadata(fid)
-            mime_type = metadata.get("mimeType", "image/jpeg")
+            info = drive_get_media_info(fid)
+            mime_type = info.get("mimeType", "image/jpeg")
+            file_size = int(info.get("size", 0))
 
-            error = validate_media_pre_publish(file_bytes, mime_type, post_type, network)
+            # Extract dimensions from Drive metadata (no download needed)
+            img_meta = info.get("imageMediaMetadata") or {}
+            vid_meta = info.get("videoMediaMetadata") or {}
+            width = img_meta.get("width") or vid_meta.get("width")
+            height = img_meta.get("height") or vid_meta.get("height")
+            duration_ms = vid_meta.get("durationMillis")
+            duration_s = int(duration_ms) / 1000.0 if duration_ms else None
+
+            error = validate_media_from_metadata(
+                mime_type, file_size, width, height, duration_s,
+                post_type, network,
+            )
             if error:
                 # לפני סימון ERROR — בודקים שה-drive_file_id לא השתנה בינתיים
                 if _drive_ids_changed(sheet_row_number, drive_file_ids, header):
@@ -140,7 +152,7 @@ def _validate_media_background(
         logger.error(f"Post {row_id}: Media validation error: {e}", exc_info=True)
 
 
-# Hebrew prefixes used by validate_media_pre_publish — used to distinguish
+# Hebrew prefixes used by media validation — used to distinguish
 # media validation errors from publisher/API errors set by the cron job.
 _MEDIA_VALIDATION_PREFIXES = (
     "תמונה לא תקינה",

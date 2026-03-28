@@ -104,6 +104,115 @@ def validate_media_pre_publish(
     return None  # unsupported types are caught later by normalize_media
 
 
+def validate_media_from_metadata(
+    mime_type: str,
+    file_size: int,
+    width: int | None,
+    height: int | None,
+    duration_s: float | None,
+    post_type: str,
+    network: str,
+) -> str | None:
+    """בדיקת מדיה לפי metadata בלבד (בלי להוריד את הקובץ).
+
+    משמש לוולידציה ברקע בפאנל הווב כדי לא לצרוך זיכרון.
+    מחזיר הודעת שגיאה בעברית או None אם תקין.
+    """
+    publishes_to_ig = network != NETWORK_FB
+
+    if mime_type in IMAGE_MIMES:
+        # ── בדיקת יחס גובה-רוחב ──
+        if publishes_to_ig and width and height:
+            ratio = width / height
+            if post_type == POST_TYPE_REELS:
+                if ratio < REELS_MIN_RATIO or ratio > REELS_MAX_RATIO:
+                    return (
+                        f"תמונה לא תקינה ל-Instagram Reels — "
+                        f"יחס גובה-רוחב {ratio:.2f} חורג מהמותר "
+                        f"({REELS_MIN_RATIO}–{REELS_MAX_RATIO}). "
+                        f"מידות: {width}×{height}. "
+                        f"נדרש יחס 9:16 (מומלץ) עד 1.91:1"
+                    )
+            else:
+                if ratio < MIN_RATIO or ratio > MAX_RATIO:
+                    return (
+                        f"תמונה לא תקינה ל-Instagram — "
+                        f"יחס גובה-רוחב {ratio:.2f} חורג מהמותר "
+                        f"({MIN_RATIO}–{MAX_RATIO}). "
+                        f"מידות: {width}×{height}. "
+                        f"נדרש יחס מרבעי (1:1) עד מלבן עומד (4:5) "
+                        f"או לרוחב עד 1.91:1. "
+                        f"יש לחתוך את התמונה לפני ההעלאה"
+                    )
+        # ── בדיקת גודל ──
+        if file_size > IMAGE_RAW_SIZE_WARN:
+            size_mb = file_size / (1024 * 1024)
+            platform = "Instagram" if publishes_to_ig else "Facebook"
+            limit = "8MB" if publishes_to_ig else "10MB"
+            return (
+                f"התמונה גדולה מדי ({size_mb:.1f}MB). "
+                f"המערכת דוחסת אוטומטית, אבל קבצים מעל 30MB "
+                f"עלולים להישאר גדולים מדי ל-{platform} (מקסימום {limit}). "
+                f"מומלץ להקטין את התמונה לפני ההעלאה"
+            )
+
+    elif mime_type in VIDEO_MIMES:
+        # ── בדיקת גודל קובץ ──
+        if publishes_to_ig and file_size > IG_VIDEO_MAX_SIZE:
+            size_mb = file_size / (1024 * 1024)
+            return (
+                f"הסרטון גדול מדי ל-Instagram ({size_mb:.0f}MB). "
+                f"מקסימום 300MB. יש להקטין את הסרטון לפני ההעלאה"
+            )
+        if not publishes_to_ig and file_size > FB_VIDEO_MAX_SIZE:
+            size_mb = file_size / (1024 * 1024)
+            return (
+                f"הסרטון גדול מדי ל-Facebook ({size_mb:.0f}MB). "
+                f"מקסימום 2GB. יש להקטין את הסרטון לפני ההעלאה"
+            )
+        # ── בדיקת משך ──
+        if publishes_to_ig and duration_s is not None:
+            if duration_s < IG_VIDEO_MIN_DURATION:
+                return (
+                    f"הסרטון קצר מדי ל-Instagram ({duration_s:.1f} שניות). "
+                    f"מינימום 3 שניות"
+                )
+            max_dur = IG_REELS_MAX_DURATION if post_type == POST_TYPE_REELS else IG_VIDEO_MAX_DURATION
+            label = "Reels" if post_type == POST_TYPE_REELS else "Instagram"
+            if duration_s > max_dur:
+                mins = int(duration_s // 60)
+                secs = int(duration_s % 60)
+                dur_str = f"{mins}:{secs:02d} דקות"
+                return (
+                    f"הסרטון ארוך מדי ל-{label} ({dur_str}). "
+                    f"מקסימום {max_dur // 60} דקות"
+                )
+        # ── בדיקת יחס גובה-רוחב ──
+        if publishes_to_ig and width and height:
+            ratio = width / height
+            if post_type == POST_TYPE_REELS:
+                if ratio < REELS_MIN_RATIO or ratio > REELS_MAX_RATIO:
+                    return (
+                        f"סרטון לא תקין ל-Instagram Reels — "
+                        f"יחס גובה-רוחב {ratio:.2f} חורג מהמותר. "
+                        f"מידות: {width}×{height}. "
+                        f"נדרש יחס 9:16 (מומלץ) עד 1.91:1"
+                    )
+            else:
+                if ratio < MIN_RATIO or ratio > MAX_RATIO:
+                    return (
+                        f"סרטון לא תקין ל-Instagram — "
+                        f"יחס גובה-רוחב {ratio:.2f} חורג מהמותר "
+                        f"({MIN_RATIO}–{MAX_RATIO}). "
+                        f"מידות: {width}×{height}. "
+                        f"נדרש יחס מרבעי (1:1) עד מלבן עומד (4:5) "
+                        f"או לרוחב עד 1.91:1. "
+                        f"יש לחתוך את הסרטון לפני ההעלאה"
+                    )
+
+    return None
+
+
 def _validate_image_pre_publish(
     file_bytes: bytes,
     post_type: str,

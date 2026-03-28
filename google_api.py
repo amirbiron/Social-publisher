@@ -171,6 +171,23 @@ def drive_get_file_metadata(file_id: str) -> dict:
     )
 
 
+def drive_get_media_info(file_id: str) -> dict:
+    """
+    מביא metadata מורחב של קובץ מדיה — כולל ממדים ומשך וידאו.
+    מחזיר: {mimeType, size, imageMediaMetadata?, videoMediaMetadata?}
+    """
+    svc = get_drive_service()
+    return (
+        svc.files()
+        .get(
+            fileId=file_id,
+            fields="mimeType,size,imageMediaMetadata,videoMediaMetadata",
+            supportsAllDrives=True,
+        )
+        .execute()
+    )
+
+
 def drive_download_bytes(file_id: str) -> bytes:
     """
     מוריד את תוכן הקובץ כ-bytes מ-Drive (alt=media).
