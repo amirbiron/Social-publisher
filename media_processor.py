@@ -60,6 +60,7 @@ def normalize_media(
     mime_type: str,
     file_name: str,
     post_type: str,
+    network: str = "",
 ) -> tuple[bytes, str, str]:
     """נקודת כניסה ראשית — מנרמל מדיה לפי דרישות Meta API.
 
@@ -72,7 +73,7 @@ def normalize_media(
         )
 
     if mime_type in IMAGE_MIMES:
-        return _normalize_image(file_bytes, file_name, post_type)
+        return _normalize_image(file_bytes, file_name, post_type, network)
 
     if mime_type in VIDEO_MIMES:
         return _normalize_video(file_bytes, mime_type, file_name)
@@ -264,9 +265,9 @@ def _validate_video_pre_publish(
 
 # ─── Image Processing ────────────────────────────────────────
 def _normalize_image(
-    file_bytes: bytes, file_name: str, post_type: str = ""
+    file_bytes: bytes, file_name: str, post_type: str = "", network: str = ""
 ) -> tuple[bytes, str, str]:
-    """המרת תמונה ל-JPEG תקין לפי דרישות Instagram API."""
+    """המרת תמונה ל-JPEG תקין לפי דרישות Meta API."""
     # 1. Open & fix EXIF orientation
     try:
         img = Image.open(io.BytesIO(file_bytes))
@@ -291,22 +292,24 @@ def _normalize_image(
     if img.mode != "RGB":
         img = img.convert("RGB")
 
-    # 5. Validate aspect ratio
+    # 5. Validate aspect ratio (Instagram only — Facebook has no strict ratio limits)
     width, height = img.size
     ratio = width / height
-    if post_type == POST_TYPE_REELS:
-        min_r, max_r = REELS_MIN_RATIO, REELS_MAX_RATIO
-        error_code = "INVALID_REELS_RATIO"
-    else:
-        min_r, max_r = MIN_RATIO, MAX_RATIO
-        error_code = "INVALID_FEED_RATIO"
-    if ratio < min_r or ratio > max_r:
-        raise MediaProcessingError(
-            f"Invalid aspect ratio {ratio:.2f} "
-            f"(must be between {min_r} and {max_r}). "
-            f"Image dimensions: {width}x{height}",
-            error_code,
-        )
+    publishes_to_ig = network != NETWORK_FB
+    if publishes_to_ig:
+        if post_type == POST_TYPE_REELS:
+            min_r, max_r = REELS_MIN_RATIO, REELS_MAX_RATIO
+            error_code = "INVALID_REELS_RATIO"
+        else:
+            min_r, max_r = MIN_RATIO, MAX_RATIO
+            error_code = "INVALID_FEED_RATIO"
+        if ratio < min_r or ratio > max_r:
+            raise MediaProcessingError(
+                f"Invalid aspect ratio {ratio:.2f} "
+                f"(must be between {min_r} and {max_r}). "
+                f"Image dimensions: {width}x{height}",
+                error_code,
+            )
 
     # 6. Resize
     if width > TARGET_WIDTH:

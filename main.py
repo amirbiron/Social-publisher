@@ -212,7 +212,7 @@ def process_row(
             # נרמול מדיה
             logger.info(f"Row {row_id}: Normalizing media {file_label}...")
             file_bytes, mime_type, file_name = normalize_media(
-                file_bytes, mime_type, file_name, post_type
+                file_bytes, mime_type, file_name, post_type, network
             )
 
             # העלאה ל-Cloudinary
