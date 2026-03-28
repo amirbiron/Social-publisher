@@ -96,6 +96,13 @@ def _validate_media_background(
             vid_meta = info.get("videoMediaMetadata") or {}
             width = img_meta.get("width") or vid_meta.get("width")
             height = img_meta.get("height") or vid_meta.get("height")
+
+            # Drive returns raw pixel dimensions — apply EXIF rotation for images
+            # (phone photos in portrait have raw landscape dims + rotation=90/270)
+            rotation = img_meta.get("rotation", 0)
+            if rotation in (90, 270) and width and height:
+                width, height = height, width
+
             duration_ms = vid_meta.get("durationMillis")
             duration_s = int(duration_ms) / 1000.0 if duration_ms else None
 
