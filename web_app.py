@@ -930,25 +930,26 @@ def _maybe_run_daily_version_check():
             status = result.get("status")
             with _notify_lock:
                 global _meta_version_unknown_count
+                # תמיד עדכן את המונה, גם אם ה-cooldown פעיל
+                if status in ("warning", "error", "ok"):
+                    _meta_version_unknown_count = 0
+                elif status == "unknown":
+                    _meta_version_unknown_count += 1
+
                 now_inner = datetime.now(timezone.utc)
                 last_sent = _health_notify_cooldown.get("meta_api_version")
                 if last_sent and (now_inner - last_sent).total_seconds() < _DAILY_CHECK_INTERVAL:
                     return
                 if status in ("warning", "error"):
-                    _meta_version_unknown_count = 0
                     notify_meta_api_version_expiry(
                         result.get("version", "?"),
                         result.get("expiry", "?"),
                         result.get("days_left", 0),
                     )
                     _health_notify_cooldown["meta_api_version"] = now_inner
-                elif status == "unknown":
-                    _meta_version_unknown_count += 1
-                    if _meta_version_unknown_count >= _META_VERSION_UNKNOWN_THRESHOLD:
-                        notify_meta_api_version_unknown(result.get("version", "?"))
-                        _health_notify_cooldown["meta_api_version"] = now_inner
-                elif status == "ok":
-                    _meta_version_unknown_count = 0
+                elif status == "unknown" and _meta_version_unknown_count >= _META_VERSION_UNKNOWN_THRESHOLD:
+                    notify_meta_api_version_unknown(result.get("version", "?"))
+                    _health_notify_cooldown["meta_api_version"] = now_inner
         except Exception as e:
             logger.warning(f"Daily Meta API version check failed: {e}")
 
