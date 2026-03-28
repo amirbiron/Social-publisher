@@ -50,8 +50,10 @@ from google_api import (
     sheets_delete_row,
     col_letter_from_header,
     drive_list_folder,
+    drive_download_with_metadata,
     get_drive_service,
 )
+from media_processor import validate_media_pre_publish
 from notifications import notify_health_issue, notify_meta_api_version_expiry, notify_meta_api_version_unknown
 
 # ─── Logging ─────────────────────────────────────────────────
@@ -62,6 +64,150 @@ logging.basicConfig(
     stream=sys.stdout,
 )
 logger = logging.getLogger("web-panel")
+
+# ─── Background Media Validation ────────────────────────────
+_validation_executor = ThreadPoolExecutor(max_workers=2)
+
+
+def _validate_media_background(
+    drive_file_ids: list[str],
+    post_type: str,
+    network: str,
+    sheet_row_number: int,
+    header: list[str],
+    row_id: str,
+):
+    """הורדת מדיה מ-Drive ובדיקת תקינות ברקע — מסמן ERROR אם לא תקין."""
+    try:
+        # אימות שהשורה עדיין מכילה את הפוסט הנכון (שורות יכולות לזוז אחרי מחיקה)
+        _, current_rows = sheets_read_all_rows()
+        id_err = _verify_row_id(sheet_row_number, row_id, header, current_rows)
+        if id_err:
+            logger.warning(f"Post {row_id}: Row shifted, skipping validation — {id_err}")
+            return
+
+        for fid in drive_file_ids:
+            file_bytes, metadata = drive_download_with_metadata(fid)
+            mime_type = metadata.get("mimeType", "image/jpeg")
+
+            error = validate_media_pre_publish(file_bytes, mime_type, post_type, network)
+            if error:
+                # לפני סימון ERROR — בודקים שה-drive_file_id לא השתנה בינתיים
+                if _drive_ids_changed(sheet_row_number, drive_file_ids, header):
+                    logger.info(f"Post {row_id}: Media changed during validation, skipping stale result")
+                    return
+                # בודקים שהפוסט עדיין READY או ERROR מולידציה — אם Cron כבר תפס אותו, לא דורסים
+                current_status = _read_fresh_status(sheet_row_number, header)
+                if current_status == STATUS_READY:
+                    pass  # OK to write
+                elif current_status == STATUS_ERROR and _is_media_validation_error(
+                    _read_fresh_error(sheet_row_number, header)
+                ):
+                    pass  # OK to update a stale validation error with a new one
+                else:
+                    logger.info(f"Post {row_id}: Status is {current_status}, skipping validation error")
+                    return
+                logger.warning(f"Post {row_id}: Media validation failed: {error}")
+                sheets_update_cells(
+                    sheet_row_number,
+                    {COL_STATUS: STATUS_ERROR, COL_ERROR: error[:500]},
+                    header,
+                )
+                return
+
+        # לפני עדכון סטטוס — בודקים שה-drive_file_id לא השתנה בינתיים
+        if _drive_ids_changed(sheet_row_number, drive_file_ids, header):
+            logger.info(f"Post {row_id}: Media changed during validation, skipping stale result")
+            return
+
+        # ולידציה עברה — אם הפוסט סומן ERROR *מולידציה מקדימה*, מחזירים ל-READY
+        # לא מאפסים שגיאות שמקורן ב-Cron/Meta API (למשל טוקן פג, כישלון פרסום)
+        current_status = _read_fresh_status(sheet_row_number, header)
+        if current_status == STATUS_ERROR:
+            current_error = _read_fresh_error(sheet_row_number, header)
+            if _is_media_validation_error(current_error):
+                sheets_update_cells(
+                    sheet_row_number,
+                    {COL_STATUS: STATUS_READY, COL_ERROR: ""},
+                    header,
+                )
+                logger.info(f"Post {row_id}: Media validation passed — status reset to READY")
+            else:
+                logger.info(f"Post {row_id}: Media validation passed, but keeping publisher error: {current_error[:80]}")
+        else:
+            logger.info(f"Post {row_id}: Media validation passed")
+    except Exception as e:
+        logger.error(f"Post {row_id}: Media validation error: {e}", exc_info=True)
+
+
+# Hebrew prefixes used by validate_media_pre_publish — used to distinguish
+# media validation errors from publisher/API errors set by the cron job.
+_MEDIA_VALIDATION_PREFIXES = (
+    "תמונה לא תקינה",
+    "התמונה גדולה מדי",
+    "סרטון לא תקין",
+    "הסרטון גדול מדי",
+    "הסרטון קצר מדי",
+    "הסרטון ארוך מדי",
+)
+
+
+def _is_media_validation_error(error_msg: str) -> bool:
+    """בודק אם הודעת שגיאה מקורה בוולידציה מקדימה (ולא מה-Cron/Meta API)."""
+    return any(error_msg.startswith(prefix) for prefix in _MEDIA_VALIDATION_PREFIXES)
+
+
+def _read_fresh_error(sheet_row_number: int, header: list[str]) -> str:
+    """קורא את שדה השגיאה הנוכחי של שורה מהטבלה."""
+    try:
+        fresh_row = sheets_read_row(sheet_row_number)
+        error_idx = header.index(COL_ERROR)
+        return fresh_row[error_idx].strip() if error_idx < len(fresh_row) else ""
+    except (ValueError, IndexError):
+        return ""
+
+
+def _read_fresh_status(sheet_row_number: int, header: list[str]) -> str:
+    """קורא את הסטטוס הנוכחי של שורה מהטבלה."""
+    try:
+        fresh_row = sheets_read_row(sheet_row_number)
+        status_idx = header.index(COL_STATUS)
+        return fresh_row[status_idx].strip().upper() if status_idx < len(fresh_row) else ""
+    except (ValueError, IndexError):
+        return ""
+
+
+def _drive_ids_changed(sheet_row_number: int, original_ids: list[str], header: list[str]) -> bool:
+    """בודק אם ה-drive_file_id השתנה מאז תחילת הוולידציה."""
+    try:
+        fresh_row = sheets_read_row(sheet_row_number)
+        fid_idx = header.index(COL_DRIVE_FILE_ID)
+        current_fid = fresh_row[fid_idx] if fid_idx < len(fresh_row) else ""
+        current_ids = [f.strip() for f in current_fid.split(",") if f.strip()]
+        return current_ids != original_ids
+    except (ValueError, IndexError):
+        return False
+
+
+def _trigger_media_validation(data: dict, sheet_row_number: int, header: list[str], row_id: str):
+    """מפעיל בדיקת מדיה ברקע אם יש drive_file_id."""
+    drive_file_id = (data.get(COL_DRIVE_FILE_ID) or "").strip()
+    if not drive_file_id:
+        return
+
+    drive_file_ids = [fid.strip() for fid in drive_file_id.split(",") if fid.strip()]
+    if not drive_file_ids:
+        return
+
+    network = (data.get(COL_NETWORK) or "").strip().upper() or NETWORK_IG
+    post_type = (data.get(COL_POST_TYPE) or "").strip().upper() or POST_TYPE_FEED
+
+    _validation_executor.submit(
+        _validate_media_background,
+        drive_file_ids, post_type, network,
+        sheet_row_number, header, row_id,
+    )
+
 
 # ─── Flask App ───────────────────────────────────────────────
 app = Flask(__name__)
@@ -369,7 +515,11 @@ def api_create_post():
                 row_values.append("")
 
         sheets_append_row(row_values)
+        new_row_number = len(rows) + 2  # header=1, 0-indexed rows → +2
         logger.info(f"Created post ID {next_id}")
+
+        # ── בדיקת תקינות מדיה ברקע ──
+        _trigger_media_validation(data, new_row_number, header, next_id)
 
         return jsonify({"success": True, "id": next_id})
 
@@ -434,6 +584,25 @@ def api_update_post(row_number):
         if updates:
             sheets_update_cells(row_number, updates, header)
             logger.info(f"Updated row {row_number}: {list(updates.keys())}")
+
+        # ── בדיקת תקינות מדיה ברקע אם שדות מדיה השתנו ──
+        media_fields = {COL_DRIVE_FILE_ID, COL_NETWORK, COL_POST_TYPE}
+        if updates.keys() & media_fields:
+            # Merge existing row data with updates for full context
+            row_idx = row_number - 2
+            existing_row = rows[row_idx] if row_idx < len(rows) else []
+            merged = {}
+            for col in (COL_DRIVE_FILE_ID, COL_NETWORK, COL_POST_TYPE):
+                if col in updates:
+                    merged[col] = updates[col]
+                else:
+                    try:
+                        ci = header.index(col)
+                        merged[col] = existing_row[ci] if ci < len(existing_row) else ""
+                    except (ValueError, IndexError):
+                        merged[col] = ""
+            row_id = data.get("expected_id", "")
+            _trigger_media_validation(merged, row_number, header, row_id)
 
         return jsonify({"success": True})
 
