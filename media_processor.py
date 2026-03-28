@@ -294,8 +294,6 @@ def _validate_video_pre_publish(
         mime_type, file_size, vid_width, vid_height, duration, post_type, network,
     )
 
-    return None
-
 
 # ─── Image Processing ────────────────────────────────────────
 def _normalize_image(
