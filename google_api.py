@@ -4,6 +4,7 @@ google_api.py — פונקציות עזר ל-Google Sheets ו-Google Drive
 
 import io
 import logging
+import threading
 from typing import Optional
 
 from google.oauth2 import service_account
@@ -21,11 +22,11 @@ logger = logging.getLogger(__name__)
 
 
 # ═══════════════════════════════════════════════════════════════
-#  Google Clients (Singleton-ish for one run)
+#  Google Clients — thread-local כדי למנוע SIGSEGV
+#  (httplib2 שמאחורי googleapiclient לא thread-safe)
 # ═══════════════════════════════════════════════════════════════
 
-_sheets_service = None
-_drive_service = None
+_tls = threading.local()
 
 
 def _get_credentials():
@@ -36,19 +37,21 @@ def _get_credentials():
 
 
 def get_sheets_service():
-    global _sheets_service
-    if _sheets_service is None:
+    svc = getattr(_tls, "sheets_service", None)
+    if svc is None:
         creds = _get_credentials()
-        _sheets_service = build("sheets", "v4", credentials=creds)
-    return _sheets_service
+        svc = build("sheets", "v4", credentials=creds)
+        _tls.sheets_service = svc
+    return svc
 
 
 def get_drive_service():
-    global _drive_service
-    if _drive_service is None:
+    svc = getattr(_tls, "drive_service", None)
+    if svc is None:
         creds = _get_credentials()
-        _drive_service = build("drive", "v3", credentials=creds)
-    return _drive_service
+        svc = build("drive", "v3", credentials=creds)
+        _tls.drive_service = svc
+    return svc
 
 
 # ═══════════════════════════════════════════════════════════════
