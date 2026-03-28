@@ -50,8 +50,10 @@ from google_api import (
     sheets_delete_row,
     col_letter_from_header,
     drive_list_folder,
+    drive_download_with_metadata,
     get_drive_service,
 )
+from media_processor import validate_media_pre_publish
 from notifications import notify_health_issue, notify_meta_api_version_expiry, notify_meta_api_version_unknown
 
 # ─── Logging ─────────────────────────────────────────────────
@@ -62,6 +64,58 @@ logging.basicConfig(
     stream=sys.stdout,
 )
 logger = logging.getLogger("web-panel")
+
+# ─── Background Media Validation ────────────────────────────
+_validation_executor = ThreadPoolExecutor(max_workers=2)
+
+
+def _validate_media_background(
+    drive_file_ids: list[str],
+    post_type: str,
+    network: str,
+    sheet_row_number: int,
+    header: list[str],
+    row_id: str,
+):
+    """הורדת מדיה מ-Drive ובדיקת תקינות ברקע — מסמן ERROR אם לא תקין."""
+    try:
+        for fid in drive_file_ids:
+            file_bytes, metadata = drive_download_with_metadata(fid)
+            mime_type = metadata.get("mimeType", "image/jpeg")
+
+            error = validate_media_pre_publish(file_bytes, mime_type, post_type, network)
+            if error:
+                logger.warning(f"Post {row_id}: Media validation failed: {error}")
+                sheets_update_cells(
+                    sheet_row_number,
+                    {COL_STATUS: STATUS_ERROR, COL_ERROR: error[:500]},
+                    header,
+                )
+                return
+        logger.info(f"Post {row_id}: Media validation passed")
+    except Exception as e:
+        logger.error(f"Post {row_id}: Media validation error: {e}", exc_info=True)
+
+
+def _trigger_media_validation(data: dict, sheet_row_number: int, header: list[str], row_id: str):
+    """מפעיל בדיקת מדיה ברקע אם יש drive_file_id."""
+    drive_file_id = (data.get(COL_DRIVE_FILE_ID) or "").strip()
+    if not drive_file_id:
+        return
+
+    drive_file_ids = [fid.strip() for fid in drive_file_id.split(",") if fid.strip()]
+    if not drive_file_ids:
+        return
+
+    network = (data.get(COL_NETWORK) or "").strip().upper() or NETWORK_IG
+    post_type = (data.get(COL_POST_TYPE) or "").strip().upper() or POST_TYPE_FEED
+
+    _validation_executor.submit(
+        _validate_media_background,
+        drive_file_ids, post_type, network,
+        sheet_row_number, header, row_id,
+    )
+
 
 # ─── Flask App ───────────────────────────────────────────────
 app = Flask(__name__)
@@ -369,7 +423,11 @@ def api_create_post():
                 row_values.append("")
 
         sheets_append_row(row_values)
+        new_row_number = len(rows) + 2  # header=1, 0-indexed rows → +2
         logger.info(f"Created post ID {next_id}")
+
+        # ── בדיקת תקינות מדיה ברקע ──
+        _trigger_media_validation(data, new_row_number, header, next_id)
 
         return jsonify({"success": True, "id": next_id})
 
@@ -434,6 +492,25 @@ def api_update_post(row_number):
         if updates:
             sheets_update_cells(row_number, updates, header)
             logger.info(f"Updated row {row_number}: {list(updates.keys())}")
+
+        # ── בדיקת תקינות מדיה ברקע אם שדות מדיה השתנו ──
+        media_fields = {COL_DRIVE_FILE_ID, COL_NETWORK, COL_POST_TYPE}
+        if updates.keys() & media_fields:
+            # Merge existing row data with updates for full context
+            row_idx = row_number - 2
+            existing_row = rows[row_idx] if row_idx < len(rows) else []
+            merged = {}
+            for col in (COL_DRIVE_FILE_ID, COL_NETWORK, COL_POST_TYPE):
+                if col in updates:
+                    merged[col] = updates[col]
+                else:
+                    try:
+                        ci = header.index(col)
+                        merged[col] = existing_row[ci] if ci < len(existing_row) else ""
+                    except (ValueError, IndexError):
+                        merged[col] = ""
+            row_id = data.get("expected_id", str(row_number))
+            _trigger_media_validation(merged, row_number, header, row_id)
 
         return jsonify({"success": True})
 
