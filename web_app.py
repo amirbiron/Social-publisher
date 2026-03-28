@@ -657,6 +657,8 @@ _health_notify_cooldown: dict[str, datetime] = {}  # {service_name: last_notifie
 HEALTH_CACHE_TTL_SECONDS = int(os.environ.get("HEALTH_CACHE_TTL_SECONDS", "60"))
 _health_cache: dict = {}  # {"result": ..., "status_code": ..., "timestamp": datetime}
 _notify_lock = threading.Lock()
+_meta_version_unknown_count = 0  # סופר כשלונות רצופים לפני שליחת התראה
+_META_VERSION_UNKNOWN_THRESHOLD = 3  # שולח התראה רק אחרי 3 כשלונות רצופים
 
 def _check_google_sheets() -> dict:
     """בדיקת חיבור ל-Google Sheets — קורא רק את שורת ה-header."""
@@ -836,8 +838,10 @@ def api_health():
     # שליחת התראות טלגרם על שירותים שנפלו (עם cooldown למניעת ספאם)
     now = datetime.now(timezone.utc)
     with _notify_lock:
+        global _meta_version_unknown_count
         for name, check in checks.items():
             if name == "meta_api_version" and check["status"] in ("warning", "error"):
+                _meta_version_unknown_count = 0
                 last_sent = _health_notify_cooldown.get("meta_api_version")
                 if last_sent is None or (now - last_sent).total_seconds() >= HEALTH_NOTIFY_COOLDOWN_SECONDS:
                     notify_meta_api_version_expiry(
@@ -845,10 +849,14 @@ def api_health():
                     )
                     _health_notify_cooldown["meta_api_version"] = now
             elif name == "meta_api_version" and check["status"] == "unknown":
-                last_sent = _health_notify_cooldown.get("meta_api_version")
-                if last_sent is None or (now - last_sent).total_seconds() >= HEALTH_NOTIFY_COOLDOWN_SECONDS:
-                    notify_meta_api_version_unknown(check.get("version", "?"))
-                    _health_notify_cooldown["meta_api_version"] = now
+                _meta_version_unknown_count += 1
+                if _meta_version_unknown_count >= _META_VERSION_UNKNOWN_THRESHOLD:
+                    last_sent = _health_notify_cooldown.get("meta_api_version")
+                    if last_sent is None or (now - last_sent).total_seconds() >= HEALTH_NOTIFY_COOLDOWN_SECONDS:
+                        notify_meta_api_version_unknown(check.get("version", "?"))
+                        _health_notify_cooldown["meta_api_version"] = now
+            elif name == "meta_api_version" and check["status"] == "ok":
+                _meta_version_unknown_count = 0
             elif check["status"] == "error":
                 last_sent = _health_notify_cooldown.get(name)
                 if last_sent is None or (now - last_sent).total_seconds() >= HEALTH_NOTIFY_COOLDOWN_SECONDS:
@@ -921,11 +929,13 @@ def _maybe_run_daily_version_check():
             logger.info(f"Daily Meta API version check: {result}")
             status = result.get("status")
             with _notify_lock:
+                global _meta_version_unknown_count
                 now_inner = datetime.now(timezone.utc)
                 last_sent = _health_notify_cooldown.get("meta_api_version")
                 if last_sent and (now_inner - last_sent).total_seconds() < _DAILY_CHECK_INTERVAL:
                     return
                 if status in ("warning", "error"):
+                    _meta_version_unknown_count = 0
                     notify_meta_api_version_expiry(
                         result.get("version", "?"),
                         result.get("expiry", "?"),
@@ -933,8 +943,12 @@ def _maybe_run_daily_version_check():
                     )
                     _health_notify_cooldown["meta_api_version"] = now_inner
                 elif status == "unknown":
-                    notify_meta_api_version_unknown(result.get("version", "?"))
-                    _health_notify_cooldown["meta_api_version"] = now_inner
+                    _meta_version_unknown_count += 1
+                    if _meta_version_unknown_count >= _META_VERSION_UNKNOWN_THRESHOLD:
+                        notify_meta_api_version_unknown(result.get("version", "?"))
+                        _health_notify_cooldown["meta_api_version"] = now_inner
+                elif status == "ok":
+                    _meta_version_unknown_count = 0
         except Exception as e:
             logger.warning(f"Daily Meta API version check failed: {e}")
 
