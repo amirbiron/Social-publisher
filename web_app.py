@@ -96,6 +96,11 @@ def _validate_media_background(
                 if _drive_ids_changed(sheet_row_number, drive_file_ids, header):
                     logger.info(f"Post {row_id}: Media changed during validation, skipping stale result")
                     return
+                # בודקים שהפוסט עדיין READY — אם Cron כבר תפס אותו, לא דורסים
+                current_status = _read_fresh_status(sheet_row_number, header)
+                if current_status != STATUS_READY:
+                    logger.info(f"Post {row_id}: Status is {current_status}, skipping validation error")
+                    return
                 logger.warning(f"Post {row_id}: Media validation failed: {error}")
                 sheets_update_cells(
                     sheet_row_number,
@@ -110,13 +115,8 @@ def _validate_media_background(
             return
 
         # ולידציה עברה — אם הפוסט סומן ERROR מולידציה קודמת, מחזירים ל-READY
-        fresh_row = sheets_read_row(sheet_row_number)
-        try:
-            status_idx = header.index(COL_STATUS)
-            current_status = fresh_row[status_idx] if status_idx < len(fresh_row) else ""
-        except (ValueError, IndexError):
-            current_status = ""
-        if current_status.strip().upper() == STATUS_ERROR:
+        current_status = _read_fresh_status(sheet_row_number, header)
+        if current_status == STATUS_ERROR:
             sheets_update_cells(
                 sheet_row_number,
                 {COL_STATUS: STATUS_READY, COL_ERROR: ""},
@@ -127,6 +127,16 @@ def _validate_media_background(
             logger.info(f"Post {row_id}: Media validation passed")
     except Exception as e:
         logger.error(f"Post {row_id}: Media validation error: {e}", exc_info=True)
+
+
+def _read_fresh_status(sheet_row_number: int, header: list[str]) -> str:
+    """קורא את הסטטוס הנוכחי של שורה מהטבלה."""
+    try:
+        fresh_row = sheets_read_row(sheet_row_number)
+        status_idx = header.index(COL_STATUS)
+        return fresh_row[status_idx].strip().upper() if status_idx < len(fresh_row) else ""
+    except (ValueError, IndexError):
+        return ""
 
 
 def _drive_ids_changed(sheet_row_number: int, original_ids: list[str], header: list[str]) -> bool:
