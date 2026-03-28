@@ -14,7 +14,13 @@ import tempfile
 
 from PIL import Image, ImageOps, UnidentifiedImageError
 
-from config import IMAGE_MIMES, POST_TYPE_REELS, VIDEO_MIMES
+from config import (
+    IMAGE_MIMES,
+    NETWORK_FB,
+    NETWORK_IG,
+    POST_TYPE_REELS,
+    VIDEO_MIMES,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -28,6 +34,15 @@ REELS_MIN_RATIO = 0.5625  # 9:16
 REELS_MAX_RATIO = 1.91    # 1.91:1
 JPEG_QUALITY_STEPS = [85, 80, 75, 70, 68]
 FFMPEG_TIMEOUT = int(os.environ.get("FFMPEG_TIMEOUT", "300"))  # seconds
+
+# ─── Platform-specific limits ────────────────────────────────
+IG_IMAGE_MAX_SIZE = 8_388_608       # 8 MB
+FB_IMAGE_MAX_SIZE = 10_485_760      # 10 MB
+IG_VIDEO_MAX_SIZE = 314_572_800     # 300 MB
+FB_VIDEO_MAX_SIZE = 2_147_483_648   # 2 GB
+IG_VIDEO_MIN_DURATION = 3           # seconds
+IG_VIDEO_MAX_DURATION = 900         # 15 minutes
+IG_REELS_MAX_DURATION = 900         # 15 minutes
 
 
 # ─── Exception ────────────────────────────────────────────────
@@ -65,6 +80,186 @@ def normalize_media(
     raise MediaProcessingError(
         f"Unsupported MIME type: {mime_type}", "UNSUPPORTED_MEDIA_TYPE"
     )
+
+
+# ─── Pre-publish Validation ──────────────────────────────────
+
+def validate_media_pre_publish(
+    file_bytes: bytes,
+    mime_type: str,
+    post_type: str,
+    network: str,
+) -> str | None:
+    """בדיקת מדיה לפני פרסום — מחזיר הודעת שגיאה בעברית או None אם תקין.
+
+    הבדיקה מתבצעת על הקובץ הגולמי לפני עיבוד, כדי לתת למשתמש
+    הודעה ברורה במקום שגיאה סתמית מה-API של Meta.
+    """
+    if mime_type in IMAGE_MIMES:
+        return _validate_image_pre_publish(file_bytes, post_type, network)
+    if mime_type in VIDEO_MIMES:
+        return _validate_video_pre_publish(file_bytes, mime_type, post_type, network)
+    return None  # unsupported types are caught later by normalize_media
+
+
+def _validate_image_pre_publish(
+    file_bytes: bytes,
+    post_type: str,
+    network: str,
+) -> str | None:
+    """בדיקת תמונה — יחס גובה-רוחב, גודל קובץ."""
+    try:
+        img = Image.open(io.BytesIO(file_bytes))
+        width, height = img.size
+    except Exception:
+        return None  # let normalize_media handle corrupt files
+
+    ratio = width / height
+
+    # ── בדיקת יחס גובה-רוחב לאינסטגרם ──
+    publishes_to_ig = network != NETWORK_FB
+    if publishes_to_ig:
+        if post_type == POST_TYPE_REELS:
+            if ratio < REELS_MIN_RATIO or ratio > REELS_MAX_RATIO:
+                return (
+                    f"תמונה לא תקינה ל-Instagram Reels — "
+                    f"יחס גובה-רוחב {ratio:.2f} חורג מהמותר "
+                    f"({REELS_MIN_RATIO}–{REELS_MAX_RATIO}). "
+                    f"מידות: {width}×{height}. "
+                    f"נדרש יחס 9:16 (מומלץ) עד 1.91:1"
+                )
+        else:
+            if ratio < MIN_RATIO or ratio > MAX_RATIO:
+                return (
+                    f"תמונה לא תקינה ל-Instagram — "
+                    f"יחס גובה-רוחב {ratio:.2f} חורג מהמותר "
+                    f"({MIN_RATIO}–{MAX_RATIO}). "
+                    f"מידות: {width}×{height}. "
+                    f"נדרש יחס מרבעי (1:1) עד מלבן עומד (4:5) "
+                    f"או לרוחב עד 1.91:1. "
+                    f"יש לחתוך את התמונה לפני ההעלאה"
+                )
+
+    # ── בדיקת גודל קובץ ──
+    file_size = len(file_bytes)
+    if publishes_to_ig and file_size > IG_IMAGE_MAX_SIZE:
+        size_mb = file_size / (1024 * 1024)
+        # We compress automatically, but warn for very large files
+        # Only warn above 30MB where compression is unlikely to help
+        if file_size > 30_000_000:
+            return (
+                f"התמונה גדולה מדי ({size_mb:.1f}MB). "
+                f"המערכת דוחסת אוטומטית, אבל קבצים מעל 30MB "
+                f"עלולים להישאר גדולים מדי לאינסטגרם (מקסימום 8MB). "
+                f"מומלץ להקטין את התמונה לפני ההעלאה"
+            )
+
+    return None
+
+
+def _validate_video_pre_publish(
+    file_bytes: bytes,
+    mime_type: str,
+    post_type: str,
+    network: str,
+) -> str | None:
+    """בדיקת וידאו — משך, גודל קובץ, יחס גובה-רוחב."""
+    file_size = len(file_bytes)
+    publishes_to_ig = network != NETWORK_FB
+
+    # ── בדיקת גודל קובץ ──
+    if publishes_to_ig and file_size > IG_VIDEO_MAX_SIZE:
+        size_mb = file_size / (1024 * 1024)
+        return (
+            f"הסרטון גדול מדי ל-Instagram ({size_mb:.0f}MB). "
+            f"מקסימום 300MB. יש להקטין את הסרטון לפני ההעלאה"
+        )
+    if not publishes_to_ig and file_size > FB_VIDEO_MAX_SIZE:
+        size_mb = file_size / (1024 * 1024)
+        return (
+            f"הסרטון גדול מדי ל-Facebook ({size_mb:.0f}MB). "
+            f"מקסימום 2GB. יש להקטין את הסרטון לפני ההעלאה"
+        )
+
+    # ── בדיקת משך ויחס — דורש ffprobe ──
+    try:
+        with tempfile.NamedTemporaryFile(suffix=".mp4", delete=False) as tmp:
+            tmp.write(file_bytes)
+            tmp_path = tmp.name
+
+        probe = _probe_video(tmp_path)
+        os.unlink(tmp_path)
+    except Exception:
+        return None  # let normalize_media handle probe failures
+
+    # Extract duration and dimensions from video stream
+    duration = None
+    vid_width = None
+    vid_height = None
+    for stream in probe.get("streams", []):
+        if stream.get("codec_type") == "video":
+            dur_str = stream.get("duration")
+            if dur_str:
+                try:
+                    duration = float(dur_str)
+                except (ValueError, TypeError):
+                    pass
+            try:
+                vid_width = int(stream.get("width", 0))
+                vid_height = int(stream.get("height", 0))
+            except (ValueError, TypeError):
+                pass
+            break
+
+    # Try format-level duration if stream-level is missing
+    if duration is None:
+        fmt_dur = probe.get("format", {}).get("duration")
+        if fmt_dur:
+            try:
+                duration = float(fmt_dur)
+            except (ValueError, TypeError):
+                pass
+
+    # ── בדיקת משך וידאו לאינסטגרם ──
+    if publishes_to_ig and duration is not None:
+        if duration < IG_VIDEO_MIN_DURATION:
+            return (
+                f"הסרטון קצר מדי ל-Instagram ({duration:.1f} שניות). "
+                f"מינימום 3 שניות"
+            )
+        max_dur = IG_REELS_MAX_DURATION if post_type == POST_TYPE_REELS else IG_VIDEO_MAX_DURATION
+        label = "Reels" if post_type == POST_TYPE_REELS else "Instagram"
+        if duration > max_dur:
+            minutes = int(duration // 60)
+            return (
+                f"הסרטון ארוך מדי ל-{label} ({minutes} דקות). "
+                f"מקסימום {max_dur // 60} דקות"
+            )
+
+    # ── בדיקת יחס גובה-רוחב של וידאו לאינסטגרם ──
+    if publishes_to_ig and vid_width and vid_height:
+        ratio = vid_width / vid_height
+        if post_type == POST_TYPE_REELS:
+            if ratio < REELS_MIN_RATIO or ratio > REELS_MAX_RATIO:
+                return (
+                    f"סרטון לא תקין ל-Instagram Reels — "
+                    f"יחס גובה-רוחב {ratio:.2f} חורג מהמותר. "
+                    f"מידות: {vid_width}×{vid_height}. "
+                    f"נדרש יחס 9:16 (מומלץ) עד 1.91:1"
+                )
+        else:
+            if ratio < MIN_RATIO or ratio > MAX_RATIO:
+                return (
+                    f"סרטון לא תקין ל-Instagram — "
+                    f"יחס גובה-רוחב {ratio:.2f} חורג מהמותר "
+                    f"({MIN_RATIO}–{MAX_RATIO}). "
+                    f"מידות: {vid_width}×{vid_height}. "
+                    f"נדרש יחס מרבעי (1:1) עד מלבן עומד (4:5) "
+                    f"או לרוחב עד 1.91:1. "
+                    f"יש לחתוך את הסרטון לפני ההעלאה"
+                )
+
+    return None
 
 
 # ─── Image Processing ────────────────────────────────────────
@@ -245,7 +440,7 @@ def _probe_video(path: str) -> dict:
             [
                 "ffprobe", "-v", "quiet",
                 "-print_format", "json",
-                "-show_streams", path,
+                "-show_streams", "-show_format", path,
             ],
             capture_output=True,
             timeout=30,

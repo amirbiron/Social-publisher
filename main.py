@@ -47,7 +47,7 @@ from google_api import (
     drive_download_with_metadata,
 )
 from cloud_storage import upload_to_cloudinary, delete_from_cloudinary
-from media_processor import normalize_media, MediaProcessingError
+from media_processor import normalize_media, validate_media_pre_publish, MediaProcessingError
 from meta_publish import ig_publish_feed, fb_publish_feed, ig_publish_carousel
 from notifications import notify_publish_error, notify_partial_success
 
@@ -199,6 +199,15 @@ def process_row(
                 f"Row {row_id}: File {file_label} '{file_name}' | MIME: {mime_type} | "
                 f"Size: {len(file_bytes)} bytes"
             )
+
+            # ── בדיקת תקינות מדיה לפני עיבוד ──
+            validation_error = validate_media_pre_publish(
+                file_bytes, mime_type, post_type, network,
+            )
+            if validation_error:
+                logger.warning(f"Row {row_id}: Pre-publish validation failed: {validation_error}")
+                _mark_error(header, sheet_row_number, validation_error)
+                return True
 
             # נרמול מדיה
             logger.info(f"Row {row_id}: Normalizing media {file_label}...")
