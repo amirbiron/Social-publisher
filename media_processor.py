@@ -36,8 +36,9 @@ JPEG_QUALITY_STEPS = [85, 80, 75, 70, 68]
 FFMPEG_TIMEOUT = int(os.environ.get("FFMPEG_TIMEOUT", "300"))  # seconds
 
 # ─── Platform-specific limits ────────────────────────────────
-IG_IMAGE_MAX_SIZE = 8_388_608       # 8 MB
-FB_IMAGE_MAX_SIZE = 10_485_760      # 10 MB
+# Threshold above which JPEG compression is unlikely to bring the
+# image under the API limit (8 MB for IG, 10 MB for FB).
+IMAGE_RAW_SIZE_WARN = 30_000_000    # 30 MB
 IG_VIDEO_MAX_SIZE = 314_572_800     # 300 MB
 FB_VIDEO_MAX_SIZE = 2_147_483_648   # 2 GB
 IG_VIDEO_MIN_DURATION = 3           # seconds
@@ -143,20 +144,17 @@ def _validate_image_pre_publish(
                 )
 
     # ── בדיקת גודל קובץ ──
+    # המערכת דוחסת אוטומטית ל-JPEG, אבל מעל 30MB הדחיסה כנראה לא תספיק
     file_size = len(file_bytes)
-    if publishes_to_ig and file_size > 30_000_000:
+    if file_size > IMAGE_RAW_SIZE_WARN:
         size_mb = file_size / (1024 * 1024)
+        platform = "Instagram" if publishes_to_ig else "Facebook"
+        limit = "8MB" if publishes_to_ig else "10MB"
         return (
             f"התמונה גדולה מדי ({size_mb:.1f}MB). "
             f"המערכת דוחסת אוטומטית, אבל קבצים מעל 30MB "
-            f"עלולים להישאר גדולים מדי לאינסטגרם (מקסימום 8MB). "
+            f"עלולים להישאר גדולים מדי ל-{platform} (מקסימום {limit}). "
             f"מומלץ להקטין את התמונה לפני ההעלאה"
-        )
-    if not publishes_to_ig and file_size > FB_IMAGE_MAX_SIZE:
-        size_mb = file_size / (1024 * 1024)
-        return (
-            f"התמונה גדולה מדי ל-Facebook ({size_mb:.1f}MB). "
-            f"מקסימום 10MB. יש להקטין את התמונה לפני ההעלאה"
         )
 
     return None
@@ -190,8 +188,8 @@ def _validate_video_pre_publish(
     tmp_path = None
     try:
         with tempfile.NamedTemporaryFile(suffix=".mp4", delete=False) as tmp:
-            tmp.write(file_bytes)
             tmp_path = tmp.name
+            tmp.write(file_bytes)
 
         probe = _probe_video(tmp_path)
     except Exception:
