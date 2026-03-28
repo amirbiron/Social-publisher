@@ -79,6 +79,13 @@ def _validate_media_background(
 ):
     """הורדת מדיה מ-Drive ובדיקת תקינות ברקע — מסמן ERROR אם לא תקין."""
     try:
+        # אימות שהשורה עדיין מכילה את הפוסט הנכון (שורות יכולות לזוז אחרי מחיקה)
+        _, current_rows = sheets_read_all_rows()
+        id_err = _verify_row_id(sheet_row_number, row_id, header, current_rows)
+        if id_err:
+            logger.warning(f"Post {row_id}: Row shifted, skipping validation — {id_err}")
+            return
+
         for fid in drive_file_ids:
             file_bytes, metadata = drive_download_with_metadata(fid)
             mime_type = metadata.get("mimeType", "image/jpeg")
@@ -92,7 +99,23 @@ def _validate_media_background(
                     header,
                 )
                 return
-        logger.info(f"Post {row_id}: Media validation passed")
+
+        # ולידציה עברה — אם הפוסט סומן ERROR מולידציה קודמת, מחזירים ל-READY
+        current_row = current_rows[sheet_row_number - 2] if (sheet_row_number - 2) < len(current_rows) else []
+        try:
+            status_idx = header.index(COL_STATUS)
+            current_status = current_row[status_idx] if status_idx < len(current_row) else ""
+        except (ValueError, IndexError):
+            current_status = ""
+        if current_status.strip().upper() == STATUS_ERROR:
+            sheets_update_cells(
+                sheet_row_number,
+                {COL_STATUS: STATUS_READY, COL_ERROR: ""},
+                header,
+            )
+            logger.info(f"Post {row_id}: Media validation passed — status reset to READY")
+        else:
+            logger.info(f"Post {row_id}: Media validation passed")
     except Exception as e:
         logger.error(f"Post {row_id}: Media validation error: {e}", exc_info=True)
 
