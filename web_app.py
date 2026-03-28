@@ -96,9 +96,15 @@ def _validate_media_background(
                 if _drive_ids_changed(sheet_row_number, drive_file_ids, header):
                     logger.info(f"Post {row_id}: Media changed during validation, skipping stale result")
                     return
-                # בודקים שהפוסט עדיין READY — אם Cron כבר תפס אותו, לא דורסים
+                # בודקים שהפוסט עדיין READY או ERROR מולידציה — אם Cron כבר תפס אותו, לא דורסים
                 current_status = _read_fresh_status(sheet_row_number, header)
-                if current_status != STATUS_READY:
+                if current_status == STATUS_READY:
+                    pass  # OK to write
+                elif current_status == STATUS_ERROR and _is_media_validation_error(
+                    _read_fresh_error(sheet_row_number, header)
+                ):
+                    pass  # OK to update a stale validation error with a new one
+                else:
                     logger.info(f"Post {row_id}: Status is {current_status}, skipping validation error")
                     return
                 logger.warning(f"Post {row_id}: Media validation failed: {error}")
