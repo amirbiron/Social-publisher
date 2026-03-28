@@ -111,6 +111,7 @@ def _validate_image_pre_publish(
     """בדיקת תמונה — יחס גובה-רוחב, גודל קובץ."""
     try:
         img = Image.open(io.BytesIO(file_bytes))
+        img = ImageOps.exif_transpose(img)
         width, height = img.size
     except Exception:
         return None  # let normalize_media handle corrupt files
@@ -143,17 +144,20 @@ def _validate_image_pre_publish(
 
     # ── בדיקת גודל קובץ ──
     file_size = len(file_bytes)
-    if publishes_to_ig and file_size > IG_IMAGE_MAX_SIZE:
+    if publishes_to_ig and file_size > 30_000_000:
         size_mb = file_size / (1024 * 1024)
-        # We compress automatically, but warn for very large files
-        # Only warn above 30MB where compression is unlikely to help
-        if file_size > 30_000_000:
-            return (
-                f"התמונה גדולה מדי ({size_mb:.1f}MB). "
-                f"המערכת דוחסת אוטומטית, אבל קבצים מעל 30MB "
-                f"עלולים להישאר גדולים מדי לאינסטגרם (מקסימום 8MB). "
-                f"מומלץ להקטין את התמונה לפני ההעלאה"
-            )
+        return (
+            f"התמונה גדולה מדי ({size_mb:.1f}MB). "
+            f"המערכת דוחסת אוטומטית, אבל קבצים מעל 30MB "
+            f"עלולים להישאר גדולים מדי לאינסטגרם (מקסימום 8MB). "
+            f"מומלץ להקטין את התמונה לפני ההעלאה"
+        )
+    if not publishes_to_ig and file_size > FB_IMAGE_MAX_SIZE:
+        size_mb = file_size / (1024 * 1024)
+        return (
+            f"התמונה גדולה מדי ל-Facebook ({size_mb:.1f}MB). "
+            f"מקסימום 10MB. יש להקטין את התמונה לפני ההעלאה"
+        )
 
     return None
 
@@ -183,15 +187,18 @@ def _validate_video_pre_publish(
         )
 
     # ── בדיקת משך ויחס — דורש ffprobe ──
+    tmp_path = None
     try:
         with tempfile.NamedTemporaryFile(suffix=".mp4", delete=False) as tmp:
             tmp.write(file_bytes)
             tmp_path = tmp.name
 
         probe = _probe_video(tmp_path)
-        os.unlink(tmp_path)
     except Exception:
         return None  # let normalize_media handle probe failures
+    finally:
+        if tmp_path and os.path.exists(tmp_path):
+            os.unlink(tmp_path)
 
     # Extract duration and dimensions from video stream
     duration = None
